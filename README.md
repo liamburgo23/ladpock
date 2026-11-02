@@ -81,6 +81,52 @@ new that affects your projects.
 The dashboard only listens on `127.0.0.1`, and every request needs a private key that's in the link printed in your
 terminal. It changes each time you start it. See [SECURITY.md](SECURITY.md) for the details.
 
+### Local AI review (free, private, overnight)
+
+If [Ollama](https://ollama.com) is running with a model installed, LadPock can have that model read your project to
+find logic bugs that patterns can't. Examples are a route that checks login but not ownership, or a command that
+trusts a path from the page. Everything runs on your computer.
+
+```bash
+ladpock ai status
+```
+
+```bash
+ladpock ai benchmark path/to/project
+```
+
+```bash
+ladpock ai review path/to/project
+```
+
+```bash
+ladpock ai nightly on path/to/project
+```
+
+```bash
+ladpock ai schedule --at 01:00 --until 07:00
+```
+
+These show your models and the one LadPock picked, time the model and estimate a full review, review now, include
+a project in the nightly run, and set up the nightly run.
+
+How it works:
+
+- **It reads what matters first.** Next.js routes and Tauri commands come first, each with what the static checks
+  found. Then come the scanner's medium-and-above findings, for a second opinion. Then the rest of your source.
+- **It's incremental and resumable.** Progress is saved after every part. Stopping (the time limit, battery,
+  Ctrl+C, a reboot) loses nothing. After the first run, only code that changed is re-read.
+- **Its results are leads, not findings.** The model must quote the exact line it's worried about, and LadPock
+  checks that line exists in your code. Leads that fail are dropped. Leads never change your grade, and the AI
+  can never hide a scanner finding. You confirm or dismiss each one, and dismissed leads stay dismissed.
+  Confirmed leads go into the fix prompt.
+- **The nightly task behaves.** It's a Windows scheduled task for your account only. It runs only when plugged in,
+  stops on battery and at your stop time, and runs at low priority. It optionally wakes the PC.
+  `ladpock ai unschedule` removes it.
+
+On an RTX 3090 with `qwen3.6:35b`, a review takes about 1.5 seconds per part once the model is loaded. A mid-sized
+app takes a few minutes. The dashboard has the same controls under **Local AI review**.
+
 ### Command line
 
 ```bash
@@ -104,6 +150,7 @@ you've scanned before.
 | `ladpock advisories [path]` | List known vulnerable dependencies |
 | `ladpock projects discover <folder>` | Register every project inside a folder |
 | `ladpock suppress <ref> --reason "..."` | Accept a finding for 90 days (`--days 0` = forever) |
+| `ladpock ai status\|benchmark\|review\|leads\|nightly\|schedule` | Local AI review (see above) |
 | `ladpock checks` | List every check |
 | `ladpock doctor [path]` | Check your setup and optional scanners |
 
@@ -149,7 +196,8 @@ libraries and patterns, and says so when it isn't sure. A good grade means "no o
 
 ## Privacy
 
-No telemetry. What leaves your machine:
+No telemetry. The local AI review only talks to a model server on this computer (LadPock refuses any address that
+isn't 127.0.0.1 or localhost). What leaves your machine:
 
 - package names and versions, sent to OSV.dev and the npm/PyPI registries
 - CVE IDs, sent to FIRST's EPSS API
@@ -161,7 +209,8 @@ it. Secrets are masked before anything is stored.
 
 ## Roadmap
 
-- Local AI review overnight (Ollama), with optional escalation to an external model using your own key
+- External AI review with your own API key (budget cap, a "never send" switch per project), for a second
+  opinion on serious findings and local leads
 - More framework packs: Express, FastAPI, SvelteKit, Remix
 - Pinned, checksum-verified installer for the optional scanners
 - Safe live probes against your own running app (headers, CORS, rate limits)

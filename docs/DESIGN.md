@@ -91,13 +91,32 @@ helpers in the same file one level deep. It then classifies file access (read/wr
 use. Commands missing from `generate_handler!` are marked unregistered. Rust code is scanned with a quote set
 that ignores `'`, so lifetimes don't confuse bracket matching.
 
+## Local AI review (built in 0.4.0)
+
+`ai/` holds it. `client.py` talks to Ollama on loopback only (`LADPOCK_OLLAMA_URL` can move the port, not the
+host), uses JSON-schema structured output and temperature 0, and sends `think` only to models that support it.
+
+`units.py` splits a project into review units, in priority order:
+1. Next.js routes (plus the file's first 25 lines for imports) and registered Tauri commands (plus same-file
+   helpers), each with the static facts
+2. medium-and-above scanner findings, which get a real / false-alarm / unsure verdict
+3. remaining source in 160-line chunks, hot paths first
+
+Every line is redacted and keeps its real line number. `grounding.py` keeps a lead only if its quote matches a line
+the model was shown, and pins it to the nearest matching line. `review.py` skips units whose
+(content hash, model, prompt version) were already reviewed, saves progress after each unit, and stops cleanly on
+a deadline, a stop request, battery or Ctrl+C. It prunes units for code that no longer exists.
+
+Leads are keyed by a fingerprint of category plus quote, so a dismissed lead stays dismissed when the code around
+it changes. `system.py` covers Windows power state, keep-awake, below-normal priority, and the Task Scheduler XML:
+InteractiveToken, LeastPrivilege, no start on battery, stop on battery, 12-hour limit, optional WakeToRun.
+
 ## Next milestones
 
-1. **Local AI review (overnight).** Ollama or any OpenAI-compatible local endpoint. A resumable job queue in SQLite,
-   incremental by file hash, scheduled with the OS (Task Scheduler on Windows), only when plugged in. Local findings
-   are "leads" that must quote real lines (grounding check) and can never suppress a finding.
-2. **External AI review (optional, your own key).** Separate toggle, budget cap, and a per-project "never send"
-   switch. Secrets are redacted before sending. Can be used only to escalate local leads.
-3. **More packs.** Express/Fastify, FastAPI/Django, SvelteKit, Remix, Electron. Each one adds a route parser, rules and fixtures.
-4. **Scanner installer.** Downloads pinned versions by SHA-256 with a cooldown before adopting new releases.
-5. **Live probes.** Localhost by default, ownership-verified otherwise. Headers, CORS, exposed paths, a small rate-limit burst.
+1. **External AI review (optional, your own key).** Separate toggle, budget cap, and a per-project "never send"
+   switch. Secrets are redacted before sending. Used to escalate local leads and serious findings.
+2. **More packs.** Express/Fastify, FastAPI/Django, SvelteKit, Remix, Electron. Each one adds a route parser, rules and fixtures.
+3. **Scanner installer.** Downloads pinned versions by SHA-256 with a cooldown before adopting new releases.
+4. **Live probes.** Localhost by default, ownership-verified otherwise. Headers, CORS, exposed paths, a small rate-limit burst.
+5. **Scoring calibration.** Category grades currently drop to F from a handful of medium findings. Rebalance them
+   so mediums can't alone fail a category.

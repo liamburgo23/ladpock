@@ -86,6 +86,58 @@ CREATE TABLE IF NOT EXISTS registry_cache (
     checked_at TEXT NOT NULL,
     PRIMARY KEY (ecosystem, name)
 );
+CREATE TABLE IF NOT EXISTS ai_runs (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    status TEXT NOT NULL,
+    model TEXT,
+    trigger TEXT,
+    total INTEGER DEFAULT 0,
+    done INTEGER DEFAULT 0,
+    cached INTEGER DEFAULT 0,
+    leads INTEGER DEFAULT 0,
+    dropped INTEGER DEFAULT 0,
+    errors INTEGER DEFAULT 0,
+    message TEXT
+);
+CREATE TABLE IF NOT EXISTS ai_units (
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    unit_key TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    model TEXT NOT NULL,
+    prompt_version INTEGER NOT NULL,
+    reviewed_at TEXT NOT NULL,
+    PRIMARY KEY (project_id, unit_key)
+);
+CREATE TABLE IF NOT EXISTS ai_leads (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    unit_key TEXT NOT NULL,
+    fingerprint TEXT NOT NULL,
+    file TEXT,
+    line INTEGER,
+    title TEXT,
+    severity TEXT,
+    category TEXT,
+    quote TEXT,
+    explanation TEXT,
+    fix TEXT,
+    model TEXT,
+    created_at TEXT,
+    status TEXT NOT NULL DEFAULT 'new',
+    UNIQUE (project_id, fingerprint)
+);
+CREATE TABLE IF NOT EXISTS ai_verdicts (
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    finding_ref TEXT NOT NULL,
+    verdict TEXT,
+    reason TEXT,
+    model TEXT,
+    created_at TEXT,
+    PRIMARY KEY (project_id, finding_ref)
+);
 CREATE TABLE IF NOT EXISTS human_checks (
     project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     item_id TEXT NOT NULL,
@@ -115,7 +167,17 @@ class DB:
         self.conn.execute("PRAGMA foreign_keys = ON")
         self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Add columns introduced after a database was first created."""
+        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(projects)")}
+        if "ai_nightly" not in columns:
+            self.conn.execute("ALTER TABLE projects ADD COLUMN ai_nightly INTEGER NOT NULL DEFAULT 0")
+        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(ai_runs)")}
+        if "rejected" not in columns:
+            self.conn.execute("ALTER TABLE ai_runs ADD COLUMN rejected INTEGER DEFAULT 0")
 
     def close(self) -> None:
         self.conn.close()
@@ -311,6 +373,118 @@ class DB:
         cur = self.conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
         self.conn.commit()
         return cur.rowcount > 0
+
+    # local AI review
+
+    def set_ai_nightly(self, project_id: int, enabled: bool) -> None:
+        self.conn.execute("UPDATE projects SET ai_nightly = ? WHERE id = ?", (int(enabled), project_id))
+        self.conn.commit()
+
+    def ai_nightly_projects(self) -> list[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM projects WHERE ai_nightly = 1 ORDER BY name COLLATE NOCASE").fetchall()
+
+    def ai_reviewed_units(self, project_id: int) -> dict[str, tuple[str, str, int]]:
+        rows = self.conn.execute(
+            "SELECT unit_key, content_hash, model, prompt_version FROM ai_units WHERE project_id = ?", (project_id,)
+        ).fetchall()
+        return {r["unit_key"]: (r["content_hash"], r["model"], r["prompt_version"]) for r in rows}
+
+    def ai_mark_reviewed(self, project_id: int, unit_key: str, content_hash: str, model: str, version: int) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO ai_units (project_id, unit_key, content_hash, model, prompt_version, reviewed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (project_id, unit_key, content_hash, model, version, iso()),
+        )
+        self.conn.commit()
+
+    def ai_save_leads(self, project_id: int, unit_key: str, file: str, leads: list, model: str) -> int:
+        """Replace this unit's open leads. Leads you dismissed or confirmed keep that status."""
+        keep = {lead.fingerprint for lead in leads}
+        stale = self.conn.execute(
+            "SELECT id, fingerprint FROM ai_leads WHERE project_id = ? AND unit_key = ? AND status = 'new'",
+            (project_id, unit_key),
+        ).fetchall()
+        for row in stale:
+            if row["fingerprint"] not in keep:
+                self.conn.execute("DELETE FROM ai_leads WHERE id = ?", (row["id"],))
+        existing = {r["fingerprint"] for r in self.conn.execute(
+            "SELECT fingerprint FROM ai_leads WHERE project_id = ?", (project_id,)).fetchall()}
+        added = sum(1 for lead in leads if lead.fingerprint not in existing)
+        for lead in leads:
+            self.conn.execute(
+                """INSERT INTO ai_leads (project_id, unit_key, fingerprint, file, line, title, severity, category, quote,
+                                         explanation, fix, model, created_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                   ON CONFLICT(project_id, fingerprint) DO UPDATE SET unit_key = excluded.unit_key, file = excluded.file,
+                     line = excluded.line, title = excluded.title, severity = excluded.severity,
+                     explanation = excluded.explanation, fix = excluded.fix, model = excluded.model""",
+                (project_id, unit_key, lead.fingerprint, file, lead.line, lead.title, lead.severity, lead.category,
+                 lead.quote, lead.explanation, lead.fix, model, iso()),
+            )
+        self.conn.commit()
+        return added
+
+    def ai_prune(self, project_id: int, current_keys: set[str]) -> None:
+        """Forget units (and their open leads) for code that no longer exists."""
+        for row in self.conn.execute("SELECT unit_key FROM ai_units WHERE project_id = ?", (project_id,)).fetchall():
+            if row["unit_key"] not in current_keys:
+                self.conn.execute("DELETE FROM ai_units WHERE project_id = ? AND unit_key = ?", (project_id, row["unit_key"]))
+                self.conn.execute("DELETE FROM ai_leads WHERE project_id = ? AND unit_key = ? AND status = 'new'",
+                                  (project_id, row["unit_key"]))
+        self.conn.commit()
+
+    def ai_leads(self, project_id: int) -> list[sqlite3.Row]:
+        return self.conn.execute(
+            "SELECT * FROM ai_leads WHERE project_id = ? ORDER BY status = 'dismissed', "
+            "CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 ELSE 2 END, file, line",
+            (project_id,),
+        ).fetchall()
+
+    def ai_set_lead_status(self, project_id: int, lead_id: int, status: str) -> bool:
+        cur = self.conn.execute("UPDATE ai_leads SET status = ? WHERE id = ? AND project_id = ?", (status, lead_id, project_id))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    def ai_save_verdict(self, project_id: int, ref: str, verdict: str, reason: str, model: str) -> None:
+        self.conn.execute(
+            "INSERT OR REPLACE INTO ai_verdicts (project_id, finding_ref, verdict, reason, model, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?)",
+            (project_id, ref, verdict, reason, model, iso()),
+        )
+        self.conn.commit()
+
+    def ai_verdicts(self, project_id: int) -> dict[str, sqlite3.Row]:
+        rows = self.conn.execute("SELECT * FROM ai_verdicts WHERE project_id = ?", (project_id,)).fetchall()
+        return {r["finding_ref"]: r for r in rows}
+
+    def ai_run_start(self, project_id: int, model: str, trigger: str, total: int, cached: int) -> int:
+        cur = self.conn.execute(
+            "INSERT INTO ai_runs (project_id, started_at, status, model, trigger, total, cached) VALUES (?, ?, 'running', ?, ?, ?, ?)",
+            (project_id, iso(), model, trigger, total, cached),
+        )
+        self.conn.commit()
+        return int(cur.lastrowid)
+
+    _AI_RUN_UPDATES = {
+        "status": "UPDATE ai_runs SET status = ? WHERE id = ?",
+        "done": "UPDATE ai_runs SET done = ? WHERE id = ?",
+        "leads": "UPDATE ai_runs SET leads = ? WHERE id = ?",
+        "dropped": "UPDATE ai_runs SET dropped = ? WHERE id = ?",
+        "rejected": "UPDATE ai_runs SET rejected = ? WHERE id = ?",
+        "errors": "UPDATE ai_runs SET errors = ? WHERE id = ?",
+        "message": "UPDATE ai_runs SET message = ? WHERE id = ?",
+        "finished_at": "UPDATE ai_runs SET finished_at = ? WHERE id = ?",
+    }
+
+    def ai_run_update(self, run_id: int, **fields) -> None:
+        for key, value in fields.items():
+            self.conn.execute(self._AI_RUN_UPDATES[key], (value, run_id))
+        self.conn.commit()
+
+    def ai_last_run(self, project_id: int) -> sqlite3.Row | None:
+        return self.conn.execute(
+            "SELECT * FROM ai_runs WHERE project_id = ? ORDER BY id DESC LIMIT 1", (project_id,)
+        ).fetchone()
 
     # "needs a human" checklist
     def human_checks(self, project_id: int) -> dict[str, str]:

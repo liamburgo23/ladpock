@@ -30,6 +30,10 @@ from typing import Callable
 from urllib.parse import parse_qs, urlsplit
 
 from .. import __version__, advisories, report, tauri
+from ..ai import review as ai_review
+from ..ai import settings as ai_settings
+from ..ai import system as ai_system
+from ..ai.client import LocalModelError
 from ..checks import REGISTRY
 from ..db import DB
 from ..feeds import epss, kev
@@ -68,10 +72,12 @@ class ApiError(Exception):
 class Job:
     id: str
     project_id: int | None
+    kind: str = "scan"  # scan | ai | benchmark
     status: str = "running"  # running | done | error
     log: list[str] = field(default_factory=list)
     error: str | None = None
     result: dict | None = None
+    stop: threading.Event = field(default_factory=threading.Event)
 
 
 class App:
@@ -96,20 +102,19 @@ class App:
 
     # jobs
 
-    def start_scan(self, project_id: int, path: str, options: dict) -> Job:
+    def start_job(self, kind: str, project_id: int | None, work: Callable[[DB, Job], dict]) -> Job:
+        """Run work(db, job) on a background thread; one running job per kind and project."""
         with self.jobs_lock:
             for job in self.jobs.values():
-                if job.project_id == project_id and job.status == "running":
+                if job.kind == kind and job.project_id == project_id and job.status == "running":
                     return job
-            job = Job(uuid.uuid4().hex, project_id)
+            job = Job(uuid.uuid4().hex, project_id, kind)
             self.jobs[job.id] = job
 
-        def work() -> None:
+        def run() -> None:
             db = self.db_factory()
             try:
-                result = run_scan(path, db, log=job.log.append, **options)
-                job.result = {"project_id": result.project_id, "grade": result.scorecard.grade,
-                              "score": result.scorecard.overall, "findings": len(result.findings)}
+                job.result = work(db, job)
                 job.status = "done"
             except Exception as exc:  # reported to the page, never swallowed
                 job.error = f"{type(exc).__name__}: {exc}"
@@ -117,12 +122,21 @@ class App:
             finally:
                 db.close()
 
-        threading.Thread(target=work, name=f"ladpock-scan-{job.id[:8]}", daemon=True).start()
+        threading.Thread(target=run, name=f"ladpock-{kind}-{job.id[:8]}", daemon=True).start()
         return job
 
-    def running_job(self, project_id: int) -> Job | None:
+    def start_scan(self, project_id: int, path: str, options: dict) -> Job:
+        def work(db: DB, job: Job) -> dict:
+            result = run_scan(path, db, log=job.log.append, **options)
+            return {"project_id": result.project_id, "grade": result.scorecard.grade,
+                    "score": result.scorecard.overall, "findings": len(result.findings)}
+
+        return self.start_job("scan", project_id, work)
+
+    def running_job(self, project_id: int, kind: str = "scan") -> Job | None:
         with self.jobs_lock:
-            return next((j for j in self.jobs.values() if j.project_id == project_id and j.status == "running"), None)
+            return next((j for j in self.jobs.values()
+                         if j.project_id == project_id and j.kind == kind and j.status == "running"), None)
 
 
 # payload builders
@@ -197,6 +211,20 @@ def project_payload(app: App, db: DB, project_id: int) -> dict:
         "job": job.id if job else None,
         "profiles": sorted(PROFILES),
         "categories": CATEGORIES,
+        "ai": ai_payload(app, db, project_id, row),
+    }
+
+
+def ai_payload(app: App, db: DB, project_id: int, row) -> dict:
+    last = db.ai_last_run(project_id)
+    ai_job = app.running_job(project_id, "ai")
+    return {
+        "nightly": bool(row["ai_nightly"]),
+        "job": ai_job.id if ai_job else None,
+        "last_run": dict(last) if last else None,
+        "leads": [dict(lead) for lead in db.ai_leads(project_id)],
+        "verdicts": {ref: {"verdict": v["verdict"], "reason": v["reason"], "model": v["model"]}
+                     for ref, v in db.ai_verdicts(project_id).items()},
     }
 
 
@@ -309,6 +337,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
             status, payload = self._route(method, url.path, parse_qs(url.query), body)
         except ApiError as exc:
             status, payload = exc.status, {"error": str(exc)}
+        except LocalModelError as exc:
+            status, payload = 503, {"error": str(exc)}
         except Exception as exc:  # report, don't crash the server thread
             status, payload = 500, {"error": f"{type(exc).__name__}: {exc}"}
         self._json(status, payload)
@@ -420,7 +450,109 @@ def api_job(app, db, match, query, body):
     job = app.jobs.get(match.group(1))
     if not job:
         raise ApiError(404, "Unknown job")
-    return 200, {"id": job.id, "status": job.status, "log": job.log[-50:], "error": job.error, "result": job.result}
+    return 200, {"id": job.id, "kind": job.kind, "status": job.status, "log": job.log[-50:], "error": job.error,
+                 "result": job.result, "stopping": job.stop.is_set()}
+
+
+def api_job_stop(app, db, match, query, body):
+    job = app.jobs.get(match.group(1))
+    if not job:
+        raise ApiError(404, "Unknown job")
+    job.stop.set()  # the AI review checks this between parts
+    return 200, {"ok": True}
+
+
+# local AI
+
+TIME = re.compile(r"(?:[01]\d|2[0-3]):[0-5]\d")
+
+
+def api_ai_status(app, db, match, query, body):
+    info = ai_settings.status(db)
+    info["schedule"] = ai_system.schedule_status()
+    return 200, info
+
+
+def api_ai_settings(app, db, match, query, body):
+    model = body.get("model")
+    if model is not None:
+        ai_settings.make_client(db, model=str(model))  # refuses models that aren't installed
+    ai_settings.save(db, model=str(model) if model is not None else None,
+                     think=_bool(body, "think") if "think" in body else None)
+    return 200, ai_settings.status(db)
+
+
+def api_ai_benchmark(app, db, match, query, body):
+    project_id = body.get("project_id")
+
+    def work(db: DB, job: Job) -> dict:
+        client = ai_settings.make_client(db)
+        job.log.append(f"Loading {client.model} and timing a sample review ...")
+        result = ai_review.benchmark(client)
+        if isinstance(project_id, int) and db.get_project_by_id(project_id):
+            units, todo = ai_review.pending_units(db, project_id, client.model)
+            result["parts"], result["todo"] = len(units), len(todo)
+            result["estimate_seconds"] = round(ai_review.estimate_seconds(todo, result["prompt_rate"],
+                                                                          result["output_rate"], client.think))
+        return result
+
+    return 202, {"job": app.start_job("benchmark", project_id if isinstance(project_id, int) else None, work).id}
+
+
+def api_ai_run(app, db, match, query, body):
+    project_id = _project_id(match)
+    row = db.get_project_by_id(project_id)
+    if not row or not Path(row["path"]).is_dir():
+        raise ApiError(404, "Project folder not found")
+    if app.running_job(project_id, "scan"):
+        raise ApiError(409, "Wait for the scan to finish first")
+    max_minutes = body.get("max_minutes")
+    if max_minutes is not None and (not isinstance(max_minutes, int) or not 1 <= max_minutes <= 1440):
+        raise ApiError(400, "max_minutes must be between 1 and 1440")
+
+    def work(db: DB, job: Job) -> dict:
+        client = ai_settings.make_client(db)
+        summary = ai_review.run_review(db, project_id, client, deadline=ai_system.deadline_from(None, max_minutes),
+                                       should_stop=job.stop.is_set, log=job.log.append)
+        return {k: getattr(summary, k) for k in ("status", "total", "cached", "done", "leads", "dropped", "errors", "message")}
+
+    return 202, {"job": app.start_job("ai", project_id, work).id}
+
+
+def api_ai_nightly(app, db, match, query, body):
+    project_id = _project_id(match)
+    if not db.get_project_by_id(project_id):
+        raise ApiError(404, "Project not found")
+    db.set_ai_nightly(project_id, _bool(body, "enabled"))
+    return 200, {"ok": True}
+
+
+def api_ai_lead(app, db, match, query, body):
+    status = body.get("status")
+    if status not in ("new", "confirmed", "dismissed"):
+        raise ApiError(400, "Status must be new, confirmed or dismissed")
+    if not db.ai_set_lead_status(_project_id(match), int(match.group(2)), status):
+        raise ApiError(404, "Lead not found")
+    return 200, {"ok": True}
+
+
+def api_ai_schedule(app, db, match, query, body):
+    at, until = str(body.get("at", "01:00")), str(body.get("until", "07:00"))
+    if not TIME.fullmatch(at) or not TIME.fullmatch(until):
+        raise ApiError(400, "Times must look like 01:00")
+    try:
+        ai_system.schedule(at, until, _bool(body, "wake"))
+    except RuntimeError as exc:
+        raise ApiError(400, str(exc)) from exc
+    return 200, ai_system.schedule_status()
+
+
+def api_ai_unschedule(app, db, match, query, body):
+    try:
+        ai_system.unschedule()
+    except RuntimeError as exc:
+        raise ApiError(400, str(exc)) from exc
+    return 200, ai_system.schedule_status()
 
 
 def api_routes(app, db, match, query, body):
@@ -444,10 +576,19 @@ def api_fix_prompt(app, db, match, query, body):
     if not scan:
         raise ApiError(404, "Scan this project first")
     findings = db.scan_findings(scan["id"])
-    refs = query.get("ref")
-    if refs:
-        findings = [f for f in findings if f["ref"] in refs]
-    return 200, {"prompt": report.fix_prompt(row["name"], findings) if findings else ""}
+    # Leads you confirmed belong in the fix list; unreviewed AI leads don't.
+    leads = [_lead_as_finding(lead) for lead in db.ai_leads(row["id"]) if lead["status"] == "confirmed"]
+    refs, lead_ids = query.get("ref"), query.get("lead")
+    if refs or lead_ids:
+        findings = [f for f in findings if f["ref"] in (refs or [])]
+        leads = [_lead_as_finding(lead) for lead in db.ai_leads(row["id"]) if str(lead["id"]) in (lead_ids or [])]
+    items = findings + leads
+    return 200, {"prompt": report.fix_prompt(row["name"], items) if items else ""}
+
+
+def _lead_as_finding(lead) -> dict:
+    return {"severity": lead["severity"], "title": f"{lead['title']} (found by local AI review)", "file": lead["file"],
+            "line": lead["line"], "message": lead["explanation"], "fix": lead["fix"]}
 
 
 def api_suppress(app, db, match, query, body):
@@ -499,6 +640,15 @@ ROUTES: list[tuple[str, re.Pattern[str], Callable]] = [
     ("GET", re.compile(r"/api/jobs/([0-9a-f]{32})"), api_job),
     ("GET", re.compile(r"/api/browse"), api_browse),
     ("GET", re.compile(r"/api/checks"), api_checks),
+    ("POST", re.compile(r"/api/jobs/([0-9a-f]{32})/stop"), api_job_stop),
+    ("GET", re.compile(r"/api/ai"), api_ai_status),
+    ("POST", re.compile(r"/api/ai/settings"), api_ai_settings),
+    ("POST", re.compile(r"/api/ai/benchmark"), api_ai_benchmark),
+    ("POST", re.compile(r"/api/ai/schedule"), api_ai_schedule),
+    ("DELETE", re.compile(r"/api/ai/schedule"), api_ai_unschedule),
+    ("POST", re.compile(r"/api/projects/(\d+)/ai/run"), api_ai_run),
+    ("POST", re.compile(r"/api/projects/(\d+)/ai/nightly"), api_ai_nightly),
+    ("POST", re.compile(r"/api/projects/(\d+)/ai/leads/(\d+)"), api_ai_lead),
 ]
 
 

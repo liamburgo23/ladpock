@@ -29,7 +29,16 @@ follows; a change that breaks one is a security bug.
    CORS headers are ever sent. Writes must be JSON. Static files are served from an allowlist. The page has a strict
    Content-Security-Policy and builds its DOM with `textContent`, so code from a scanned repository can't inject
    HTML or script. These rules are covered by `tests/test_ui.py`.
-9. **Optional scanners are external programs.** Gitleaks, OSV-Scanner and Opengrep are found on your PATH (or in
+9. **Local AI stays local and can't overrule the scanner.** The model client refuses any address that isn't
+   loopback. Code is secret-redacted before the model sees it, and the prompt tells the model to treat code as
+   untrusted data. A comment saying "this is safe" can still sway a model, so its output is constrained:
+   - every lead must quote a line that exists in the code it was shown, or it's dropped
+   - leads are capped at high severity
+   - leads never affect the grade
+   - the AI has no way to suppress or downgrade a scanner finding
+   The nightly task is created only after you confirm. It's registered for your account with least privilege,
+   and `ladpock ai unschedule` removes it.
+10. **Optional scanners are external programs.** Gitleaks, OSV-Scanner and Opengrep are found on your PATH (or in
    LadPock's data folder) and run as subprocesses with timeouts. Install them from their official releases and
    verify the checksums they publish.
 

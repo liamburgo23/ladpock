@@ -165,6 +165,7 @@ main { max-width: 1120px; margin: 0 auto; padding: 24px; outline: none; }
   padding: 6px 10px; border-radius: var(--radius); border: 1px solid var(--border-strong); background: var(--surface);
 }
 .toolbar input[type="search"] { min-width: 220px; flex: 1; }
+select.field { max-width: 100%; min-width: 0; flex: 1; }
 .filter { border: 1px solid var(--border-strong); background: var(--surface); border-radius: 999px; padding: 3px 10px; font-size: 13px; cursor: pointer; }
 .filter[aria-pressed="false"] { opacity: .45; }
 

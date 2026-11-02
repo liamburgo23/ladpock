@@ -336,7 +336,7 @@ async function renderProject(id, tab, view) {
         h("div", { style: "font-size:20px;font-weight:700" }, scan ? `${scan.score}/100` : "Not scanned"),
         h("div", { class: "faint" }, scan ? `Scanned ${ago(scan.finished_at)} · ${scan.profile}` : "Run a scan to get a grade"))));
 
-  const scanPanel = scanCard(p, data.job);
+  const scanPanel = scanCard(p, data.job, data.ai);
   const parts = [header, scanPanel];
   if (!scan) {
     parts.push(h("div", { class: "card empty" }, h("h2", null, "No scan yet"), h("p", { class: "muted" }, "Pick a profile above and press Run scan.")));
@@ -369,7 +369,7 @@ async function renderProject(id, tab, view) {
   if (data.job) watchJob(data.job, id);
 }
 
-function scanCard(p, runningJob) {
+function scanCard(p, runningJob, aiState) {
   let profile = "standard";
   const seg = h("div", { class: "segmented", role: "group", "aria-label": "Scan profile" });
   const desc = h("p", { class: "faint" }, PROFILES[profile]);
@@ -409,11 +409,183 @@ function scanCard(p, runningJob) {
           option(offline, "Offline", "Skip the network and use the last vulnerability data LadPock downloaded.")),
         h("div", { class: "row" }, runBtn, !p.exists ? h("span", { class: "faint" }, "This folder no longer exists.") : null),
         h("div", { id: "scan-progress" })),
-      h("div", { class: "stack" },
-        h("h3", null, "AI review"),
-        h("div", { class: "soon" }, h("span", { class: "chip" }, "Coming soon"), h("span", null, "Local AI, overnight. Free, and your code never leaves this computer.")),
-        h("div", { class: "soon" }, h("span", { class: "chip" }, "Coming soon"), h("span", null, "External AI with your own API key, for a second opinion on serious findings.")),
-        h("p", { class: "faint" }, "Until then, use “Copy fix prompt” to hand findings to Claude Code or your AI assistant."))));
+      aiPanel(p, aiState)));
+}
+
+// ---------- local AI ----------
+
+function aiPanel(p, ai) {
+  const box = h("div", { class: "stack" }, h("h3", null, "Local AI review"), h("div", { class: "faint" }, h("span", { class: "spinner" }), " Looking for a local model…"));
+  loadAi(box, p, ai);
+  return box;
+}
+
+function externalSoon() {
+  return h("div", { class: "soon" }, h("span", { class: "chip" }, "Coming soon"),
+    h("span", { class: "faint" }, "External AI with your own API key, for a second opinion on serious findings."));
+}
+
+async function loadAi(box, p, ai) {
+  let info;
+  try { info = await api("GET", "/api/ai"); } catch (e) { info = { available: false, error: e.message }; }
+  const title = h("h3", null, "Local AI review");
+  if (!info.available) {
+    box.replaceChildren(title,
+      h("p", { class: "muted" }, "Reads your routes, commands and code with a model running on this computer, to find logic bugs pattern checks can't. Free, and your code never leaves your machine."),
+      h("p", { class: "faint" }, "Needs Ollama (ollama.com) running with a model installed, for example: ollama pull qwen2.5-coder:14b"),
+      info.error ? h("p", { class: "faint" }, info.error) : null, externalSoon());
+    return;
+  }
+  const select = h("select", { class: "field", "aria-label": "Model" }, info.models.map((m) =>
+    h("option", { value: m.name, selected: m.name === info.model || null }, `${m.name} · ${m.size_gb} GB${m.fits_gpu ? "" : " (bigger than GPU: slower)"}`)));
+  select.addEventListener("change", async () => {
+    try { await api("POST", "/api/ai/settings", { model: select.value }); toast(`Using ${select.value}`); } catch (e) { toast(e.message); }
+  });
+  const think = h("input", { type: "checkbox", id: "ai-think", checked: info.think || null });
+  think.addEventListener("change", async () => { await api("POST", "/api/ai/settings", { think: think.checked }); });
+  const nightly = h("input", { type: "checkbox", id: "ai-nightly", checked: ai.nightly || null });
+  nightly.addEventListener("change", async () => {
+    await api("POST", `/api/projects/${p.id}/ai/nightly`, { enabled: nightly.checked });
+    toast(nightly.checked ? "Included in the nightly review" : "Removed from the nightly review");
+  });
+  const progress = h("div");
+  const estimate = h("span", { class: "faint" });
+  const runBtn = h("button", { class: "btn", disabled: !p.exists || null, onclick: async () => {
+    try {
+      const res = await api("POST", `/api/projects/${p.id}/ai/run`, {});
+      watchAiJob(res.job, p.id, progress, runBtn);
+    } catch (e) { toast(e.message); }
+  } }, "Review now");
+  const estimateBtn = h("button", { class: "btn small", onclick: async () => {
+    estimateBtn.setAttribute("aria-busy", "true");
+    estimate.textContent = "Loading the model and timing a sample…";
+    try {
+      const res = await api("POST", "/api/ai/benchmark", { project_id: p.id });
+      const result = await waitForJob(res.job);
+      const mins = Math.max(1, Math.round((result.estimate_seconds || 0) / 60));
+      estimate.textContent = `${result.todo} of ${result.parts} parts to review: about ${mins} minute${mins === 1 ? "" : "s"} (${Math.round(result.output_rate)} tokens/s).`;
+    } catch (e) { estimate.textContent = e.message; }
+    estimateBtn.removeAttribute("aria-busy");
+  } }, "Estimate time");
+
+  const last = ai.last_run;
+  const lastLine = last ? h("p", { class: "faint" },
+    `Last review ${ago(last.finished_at || last.started_at)}: ${last.done} parts read (${last.cached} unchanged), ${plural(last.leads, "new lead")}. `
+    + `Filtered out ${last.dropped} quoting code that doesn't exist and ${last.rejected || 0} that failed a second look.`,
+    last.message ? ` ${last.message}` : "")
+    : h("p", { class: "faint" }, "Not reviewed yet. The first review reads everything; later ones only re-read what changed.");
+
+  box.replaceChildren(title,
+    h("p", { class: "faint" }, "Runs on this computer. Results are leads to check, not findings: they never change the grade."),
+    h("label", { class: "row" }, h("span", { class: "faint" }, "Model"), select),
+    h("label", { class: "option", for: think.id }, think, h("span", null, "Let the model think first", h("br"), h("span", { class: "faint" }, "Slower, sometimes catches more."))),
+    h("div", { class: "row" }, runBtn, estimateBtn), estimate, progress, lastLine,
+    h("label", { class: "option", for: nightly.id }, nightly, h("span", null, "Include in the nightly review")),
+    scheduleBlock(info.schedule || {}), externalSoon());
+  if (ai.job) watchAiJob(ai.job, p.id, progress, runBtn);
+}
+
+function scheduleBlock(schedule) {
+  const box = h("div", { class: "stack" });
+  const draw = (s) => {
+    if (s.supported === false) {
+      box.replaceChildren(h("p", { class: "faint" }, "Nightly scheduling is built in on Windows. Elsewhere, run `ladpock ai review --all` from cron."));
+    } else if (s.scheduled) {
+      box.replaceChildren(h("div", { class: "row" }, h("span", { class: "faint" }, `Nightly review is on. Next run: ${s.next_run || "unknown"}`),
+        h("button", { class: "btn small", onclick: async () => draw(await api("DELETE", "/api/ai/schedule")) }, "Turn off")));
+    } else {
+      const at = h("input", { type: "time", class: "field", value: "01:00", "aria-label": "Start time" });
+      const until = h("input", { type: "time", class: "field", value: "07:00", "aria-label": "Stop time" });
+      const wake = h("input", { type: "checkbox", id: "ai-wake" });
+      const setUp = h("button", { class: "btn small", onclick: () => {
+        box.replaceChildren(h("div", { class: "form-inline" }, "Start", at, "stop by", until),
+          h("label", { class: "option", for: wake.id }, wake, h("span", null, "Wake the computer from sleep", h("br"),
+            h("span", { class: "faint" }, "Needs wake timers allowed in Windows power settings."))),
+          h("div", { class: "row" },
+            h("button", { class: "btn small primary", onclick: async () => {
+              if (!confirm(`Create a Windows scheduled task, for your account only, that reviews the projects you've included every night from ${at.value} until ${until.value}, only when plugged in?`)) return;
+              try { draw(await api("POST", "/api/ai/schedule", { at: at.value, until: until.value, wake: wake.checked })); toast("Nightly review scheduled"); }
+              catch (e) { toast(e.message); }
+            } }, "Create schedule"),
+            h("button", { class: "btn small", onclick: () => draw(s) }, "Cancel")));
+      } }, "Set up nightly review…");
+      box.replaceChildren(h("div", { class: "row" }, h("span", { class: "faint" }, "Nightly review isn't scheduled."), setUp));
+    }
+  };
+  draw(schedule);
+  return box;
+}
+
+async function waitForJob(jobId) {
+  for (;;) {
+    const job = await api("GET", `/api/jobs/${jobId}`);
+    if (job.status === "done") return job.result;
+    if (job.status === "error") throw new Error(job.error || "Failed");
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+  }
+}
+
+function watchAiJob(jobId, projectId, box, runBtn) {
+  runBtn.setAttribute("aria-busy", "true");
+  const view = state.view;
+  const stopBtn = h("button", { class: "btn small", onclick: async () => {
+    await api("POST", `/api/jobs/${jobId}/stop`);
+    stopBtn.textContent = "Stopping after this part…";
+  } }, "Stop");
+  const timer = setInterval(async () => {
+    if (view !== state.view) return clearInterval(timer);
+    let job;
+    try { job = await api("GET", `/api/jobs/${jobId}`); } catch (e) { return clearInterval(timer); }
+    const lines = job.log.slice(-6).join("\n");
+    box.replaceChildren(h("div", { class: "row" }, job.status === "running" ? h("span", { class: "spinner" }) : null,
+      job.status === "running" ? "Reviewing…" : job.status === "done" ? "Done" : "Review failed", job.status === "running" ? stopBtn : null),
+      h("div", { class: "log", style: "margin-top:8px" }, lines || "Loading the model…"));
+    if (job.status === "running") return;
+    clearInterval(timer);
+    runBtn.removeAttribute("aria-busy");
+    if (job.status === "done") {
+      toast(`AI review ${job.result.status}: ${plural(job.result.leads, "new lead")}`);
+      renderProject(projectId, currentRoute().tab, state.view);
+    } else toast(job.error || "AI review failed");
+  }, 1000);
+}
+
+function leadsSection(projectId, leads) {
+  if (!leads.length) return null;
+  const open = leads.filter((l) => l.status !== "dismissed");
+  const dismissed = leads.filter((l) => l.status === "dismissed");
+  const list = h("div", { class: "card flush" },
+    h("div", { class: "group-head" }, `AI leads (${open.length})`),
+    open.map((l) => leadEl(projectId, l)),
+    dismissed.length ? h("details", null, h("summary", { class: "faint", style: "padding:10px 20px;cursor:pointer" }, `${dismissed.length} dismissed`),
+      dismissed.map((l) => leadEl(projectId, l))) : null);
+  return h("div", { class: "stack" }, list,
+    h("p", { class: "faint" }, "Found by the local AI review and checked against your code (the quoted line exists), but not verified. Confirm the real ones to include them in the fix prompt; dismissed leads stay dismissed."));
+}
+
+function leadEl(projectId, l) {
+  const setStatus = async (status) => {
+    await api("POST", `/api/projects/${projectId}/ai/leads/${l.id}`, { status });
+    toast(status === "confirmed" ? "Confirmed. It's now included in the fix prompt." : status === "dismissed" ? "Dismissed" : "Reopened");
+    renderProject(projectId, "findings", state.view);
+  };
+  return h("details", { class: "finding" },
+    h("summary", null, sevPill(l.severity), h("span", { class: "chip accent" }, l.status === "confirmed" ? "AI · confirmed" : "AI lead"),
+      h("span", { class: "title" }, l.title), h("span", { class: "mono faint" }, `${l.file}:${l.line}`)),
+    h("div", { class: "body" },
+      h("div", { class: "snippet" }, l.quote),
+      h("p", null, h("strong", null, "Why it might matter: "), l.explanation),
+      l.fix ? h("p", null, h("strong", null, "Suggested fix: "), l.fix) : null,
+      h("p", { class: "faint" }, `${l.category} · ${l.model}`),
+      h("div", { class: "row" },
+        l.status !== "confirmed" ? h("button", { class: "btn small", onclick: () => setStatus("confirmed") }, "Confirm") : null,
+        l.status !== "dismissed" ? h("button", { class: "btn small", onclick: () => setStatus("dismissed") }, "Dismiss") : null,
+        l.status !== "new" ? h("button", { class: "btn small", onclick: () => setStatus("new") }, "Reopen") : null,
+        h("button", { class: "btn small", onclick: async () => {
+          const res = await api("GET", `/api/projects/${projectId}/fix-prompt?lead=${l.id}`);
+          await copy(res.prompt);
+          toast("Fix prompt copied");
+        } }, "Copy fix prompt"))));
 }
 
 function watchJob(jobId, projectId) {
@@ -462,6 +634,8 @@ function drawFindings(container, projectId, data, summary) {
     container.append(h("details", { class: "faint" }, h("summary", null, plural(summary.errors.length, "warning")),
       h("ul", null, summary.errors.map((e) => h("li", null, e)))));
   }
+  const leads = leadsSection(projectId, data.ai.leads);
+  if (leads) container.append(leads);
   if (!findings.length) {
     container.append(h("div", { class: "card empty" }, h("h2", null, "No issues found"),
       h("p", { class: "muted" }, "Nice. Work through the 'Needs a human' tab too, because some things no scanner can check.")));
@@ -480,7 +654,7 @@ function drawFindings(container, projectId, data, summary) {
       && (!q || [f.title, f.file, f.check_id, f.message, f.snippet].some((v) => (v || "").toLowerCase().includes(q))));
     const groups = SEVERITIES.map((sev) => [sev, shown.filter((f) => f.severity === sev)]).filter(([, items]) => items.length);
     list.replaceChildren(...(groups.length ? groups.flatMap(([sev, items]) => [
-      h("div", { class: "group-head" }, `${sev} (${items.length})`), ...items.map((f) => findingEl(f, projectId))])
+      h("div", { class: "group-head" }, `${sev} (${items.length})`), ...items.map((f) => findingEl(f, projectId, data.ai.verdicts[f.ref]))])
       : [h("p", { class: "faint", style: "padding:16px 20px" }, "Nothing matches these filters.")]));
   };
   const filters = SEVERITIES.filter((s) => counts[s]).map((sev) => h("button", { class: `filter sev-${sev}`, "aria-pressed": "true", onclick: (ev) => {
@@ -499,7 +673,7 @@ function drawFindings(container, projectId, data, summary) {
   draw();
 }
 
-function findingEl(f, projectId) {
+function findingEl(f, projectId, verdict) {
   const actions = h("div", { class: "row" });
   const fixBtn = h("button", { class: "btn small", onclick: async () => {
     const res = await api("GET", `/api/projects/${projectId}/fix-prompt?ref=${encodeURIComponent(f.ref)}`);
@@ -534,6 +708,9 @@ function findingEl(f, projectId) {
       f.snippet ? h("div", { class: "snippet" }, f.snippet) : null,
       h("p", null, h("strong", null, "Why it matters: "), f.message),
       f.fix ? h("p", null, h("strong", null, "How to fix: "), f.fix) : null,
+      verdict ? h("p", { class: "faint" }, h("strong", null, "Local AI second opinion: "),
+        { real: "likely real", false_alarm: "likely a false alarm", unsure: "can't tell" }[verdict.verdict] || verdict.verdict,
+        ` (${verdict.reason}) Advisory only; it doesn't change the grade.`) : null,
       h("p", { class: "faint" }, [f.check_id, `confidence ${f.confidence}`, f.source !== "ladpock" ? `via ${f.source}` : null, ...(f.cwe || []), `ref ${f.ref}`].filter(Boolean).join(" · ")),
       actions));
   return details;

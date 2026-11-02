@@ -178,7 +178,7 @@ def cmd_doctor(args, db: DB) -> int:
         else:
             print(f"  [missing] {name.ljust(12)} {purpose}. Install: {module.INSTALL}")
     ollama = which("ollama")
-    print(f"\nLocal AI      {'Ollama found' if ollama else 'Ollama not found'} (local AI review is planned, not built yet)")
+    print(f"\nLocal AI      {'Ollama found. See: ladpock ai status' if ollama else 'Ollama not found (https://ollama.com)'}")
     if args.path:
         index = FileIndex(args.path)
         print(f"\nProject       {index.root}")
@@ -252,6 +252,10 @@ def build_parser() -> argparse.ArgumentParser:
     doctor = sub.add_parser("doctor", help="check your setup and optional scanners")
     doctor.add_argument("path", nargs="?")
 
+    from .ai import cli as ai_cli
+
+    ai_cli.add_parser(sub)
+
     ui = sub.add_parser("ui", help="open the dashboard in your browser (only reachable from this computer)")
     ui.add_argument("--port", type=int, default=8765, help="preferred port (default 8765; another is used if busy)")
     ui.add_argument("--no-browser", action="store_true", help="print the link instead of opening a browser")
@@ -261,8 +265,14 @@ def build_parser() -> argparse.ArgumentParser:
 COMMANDS = {
     None: cmd_status, "status": cmd_status, "scan": cmd_scan, "routes": cmd_routes, "fix-prompt": cmd_fix_prompt,
     "advisories": cmd_advisories, "suppress": cmd_suppress, "projects": cmd_projects, "checks": cmd_checks,
-    "doctor": cmd_doctor, "ui": cmd_ui,
+    "doctor": cmd_doctor, "ui": cmd_ui, "ai": lambda args, db: _ai_run(args, db),
 }
+
+
+def _ai_run(args, db: DB) -> int:
+    from .ai import cli as ai_cli
+
+    return ai_cli.run(args, db)
 
 
 def main(argv: list[str] | None = None) -> int:

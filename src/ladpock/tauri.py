@@ -101,6 +101,8 @@ class TauriCommand:
     runs_programs: bool = False
     network: bool = False
     registered: bool = True
+    end_line: int = 0
+    helper_lines: list[tuple[int, int]] = field(default_factory=list)  # (start, end) of same-file helpers it calls
 
     def to_dict(self) -> dict:
         return {k: getattr(self, k) for k in (
@@ -234,12 +236,16 @@ def analyze_commands(index: FileIndex) -> list[TauriCommand]:
                 continue
             name = fn.group(1)
             start, end, params_text = functions[name]
-            body = code[start:end]
+            own_body = code[start:end]
+            body = own_body
+            helper_lines = []
             # Follow calls into helpers in the same file one level deep (e.g. write_atomic, reveal).
             for helper, (h_start, h_end, _) in functions.items():
-                if helper != name and re.search(rf"\b{re.escape(helper)}\s*\(", body):
+                if helper != name and re.search(rf"\b{re.escape(helper)}\s*\(", own_body):
                     body += "\n" + code[h_start:h_end]
-            cmd = TauriCommand(name, rel, line_of(code, fn.start()))
+                    helper_lines.append((line_of(code, h_start), line_of(code, h_end)))
+            cmd = TauriCommand(name, rel, line_of(code, fn.start()), end_line=line_of(code, end),
+                               helper_lines=helper_lines)
             for param in _split_params(params_text):
                 pname, _, ptype = param.partition(":")
                 pname = pname.replace("mut ", "").strip()
