@@ -81,6 +81,16 @@ page polls `/api/jobs/<id>` for progress. Each request opens its own SQLite conn
 mode so the page can read while a scan writes. The security rules are listed in [SECURITY.md](../SECURITY.md) and
 tested in `tests/test_ui.py`.
 
+## Tauri pack (built in 0.3.0)
+
+`tauri.py` reads `tauri.conf.json` / `Tauri.toml` (v2 `app.security`, `plugins.updater`; v1 `tauri.allowlist`,
+`tauri.security`, `tauri.updater`) and capability files under `capabilities/`. The command matrix finds every
+`#[tauri::command]`, drops parameters Tauri injects (`AppHandle`, `State`, `Window`, ...), and follows calls into
+helpers in the same file one level deep. It then classifies file access (read/write), path checking
+(`dir` = starts_with/strip_prefix against a folder, `ext` = extension only, `none`), process spawning and network
+use. Commands missing from `generate_handler!` are marked unregistered. Rust code is scanned with a quote set
+that ignores `'`, so lifetimes don't confuse bracket matching.
+
 ## Next milestones
 
 1. **Local AI review (overnight).** Ollama or any OpenAI-compatible local endpoint. A resumable job queue in SQLite,
@@ -88,6 +98,6 @@ tested in `tests/test_ui.py`.
    are "leads" that must quote real lines (grounding check) and can never suppress a finding.
 2. **External AI review (optional, your own key).** Separate toggle, budget cap, and a per-project "never send"
    switch. Secrets are redacted before sending. Can be used only to escalate local leads.
-3. **More packs.** Express/Fastify, FastAPI/Django, SvelteKit, Remix. Each one adds a route parser, rules and fixtures.
+3. **More packs.** Express/Fastify, FastAPI/Django, SvelteKit, Remix, Electron. Each one adds a route parser, rules and fixtures.
 4. **Scanner installer.** Downloads pinned versions by SHA-256 with a cooldown before adopting new releases.
 5. **Live probes.** Localhost by default, ownership-verified otherwise. Headers, CORS, exposed paths, a small rate-limit burst.

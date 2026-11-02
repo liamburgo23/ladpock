@@ -1,0 +1,18 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "CleanTauri",
+  "version": "0.1.0",
+  "identifier": "com.example.cleantauri",
+  "app": {
+    "windows": [{ "label": "main", "title": "CleanTauri" }],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'none'"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEZJWFRVUkU=",
+      "endpoints": ["https://updates.example.com/{{target}}/{{current_version}}"]
+    }
+  }
+}

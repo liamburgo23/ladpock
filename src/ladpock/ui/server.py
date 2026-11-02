@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, urlsplit
 
-from .. import __version__, advisories, report
+from .. import __version__, advisories, report, tauri
 from ..checks import REGISTRY
 from ..db import DB
 from ..feeds import epss, kev
@@ -228,7 +228,9 @@ def browse(path: str) -> dict:
         if len(dirs) >= 500:
             break
     parent = str(target.parent) if target.parent != target else ""
-    return {"path": str(target), "parent": parent, "dirs": dirs}
+    is_project = any((target / m).exists() for m in PROJECT_MARKERS)
+    return {"path": str(target), "parent": parent, "dirs": dirs, "project": is_project,
+            "projects_inside": sum(1 for d in dirs if d["project"])}
 
 
 def _bool(body: dict, key: str, default: bool = False) -> bool:
@@ -425,8 +427,11 @@ def api_routes(app, db, match, query, body):
     row = db.get_project_by_id(_project_id(match))
     if not row or not Path(row["path"]).is_dir():
         raise ApiError(404, "Project folder not found")
-    routes = analyze(FileIndex(row["path"]))
-    return 200, {"routes": [{**r.to_dict(), "gaps": gaps(r)} for r in routes]}
+    index = FileIndex(row["path"])
+    routes = analyze(index)
+    commands = tauri.analyze_commands(index) if tauri.is_tauri_project(index) else []
+    return 200, {"routes": [{**r.to_dict(), "gaps": gaps(r)} for r in routes],
+                 "commands": [{**c.to_dict(), "gaps": tauri.command_gaps(c)} for c in commands]}
 
 
 def api_advisories(app, db, match, query, body):

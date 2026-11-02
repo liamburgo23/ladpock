@@ -25,11 +25,15 @@ CRITICAL (6)
 
 ## What it does
 
-- **44 built-in checks** across secrets, sign-in, authorization, API abuse and cost, injection, payments,
+- **55 built-in checks** across secrets, sign-in, authorization, API abuse and cost, injection, payments,
   crypto, config, supply chain, and AI-generated code smells. Run `ladpock checks` for the list, or see
   [docs/CHECKS.md](docs/CHECKS.md).
 - **A route matrix** for Next.js (App Router, Pages API and server actions). It shows every endpoint with its auth,
   ownership check, validation and rate limiting, and flags the gaps.
+- **A Tauri pack and command matrix.** It checks the Content-Security-Policy, capability files (remote access,
+  file-system and shell permissions), the asset protocol and the updater. It also lists every `#[tauri::command]`
+  the page can call, with which ones read or write files, whether they check the path is inside an allowed folder,
+  and which start programs. Tauri v2 and v1 configs are both supported.
 - **Live vulnerability data before every run.** Your dependencies are checked against [OSV.dev](https://osv.dev),
   prioritised with CISA's [Known Exploited Vulnerabilities](https://www.cisa.gov/known-exploited-vulnerabilities-catalog)
   list and [EPSS](https://www.first.org/epss/) exploit likelihood.
@@ -130,6 +134,8 @@ Install them from their official releases and verify the published checksums.
 | Stack | Depth |
 |---|---|
 | Next.js, React, Supabase, Firebase, Stripe, GitHub Actions | Framework-aware checks and route matrix |
+| Tauri (v2 and v1) | CSP, capabilities, asset protocol, updater, and the command matrix |
+| Rust | Dependency vulnerabilities (Cargo.lock), network listeners, disabled TLS checks |
 | Everything else (Python, Express, other frameworks) | Generic checks: secrets, dependencies, injection patterns, config, AI code smells |
 
 Each scan says which stacks got deep checks, so you know how thorough it was. More framework packs are planned.
@@ -156,7 +162,6 @@ it. Secrets are masked before anything is stored.
 ## Roadmap
 
 - Local AI review overnight (Ollama), with optional escalation to an external model using your own key
-- A Tauri pack (CSP, capabilities, exposed commands) and Rust checks
 - More framework packs: Express, FastAPI, SvelteKit, Remix
 - Pinned, checksum-verified installer for the optional scanners
 - Safe live probes against your own running app (headers, CORS, rate limits)

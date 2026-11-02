@@ -1,0 +1,8 @@
+{
+  "name": "vuln-tauri",
+  "private": true,
+  "dependencies": {
+    "@tauri-apps/api": "2.0.0",
+    "react": "18.3.1"
+  }
+}

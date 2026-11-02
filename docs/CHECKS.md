@@ -36,6 +36,11 @@ Generated with `ladpock checks --markdown`.
 | `LP-SUPA-001` | Supabase table without Row Level Security | high | supabase |
 | `LP-SUPA-002` | Supabase policy lets everyone through | high | supabase |
 | `LP-SUPA-003` | Firebase rules open to everyone | critical | all projects |
+| `LP-TAURI-003` | Websites on the internet can call your app's commands | high | tauri |
+| `LP-TAURI-004` | Web page can read or write files anywhere | high | tauri |
+| `LP-TAURI-005` | Web page can run programs on the computer | high | tauri |
+| `LP-TAURI-007` | Asset protocol can serve files from anywhere | medium | tauri |
+| `LP-TAURI-009` | Command reads or writes whatever path the page sends | medium | tauri |
 
 ## API abuse and cost
 
@@ -55,6 +60,7 @@ Generated with `ladpock checks --markdown`.
 | `LP-INJ-003` | SQL query built from strings | high | all projects |
 | `LP-INJ-004` | Redirect target taken from the request | medium | all projects |
 | `LP-INJ-005` | Server fetches a URL supplied by the user | medium | all projects |
+| `LP-TAURI-010` | Command runs a program using input from the page | medium | tauri |
 
 ## Payments
 
@@ -75,6 +81,10 @@ Generated with `ladpock checks --markdown`.
 |---|---|---|---|
 | `LP-CFG-001` | CORS allows any website | medium | all projects |
 | `LP-CFG-002` | Source maps published in production | low | all projects |
+| `LP-RUST-001` | App listens for network connections from other machines | low | all projects |
+| `LP-TAURI-001` | No Content Security Policy for the app window | high | tauri |
+| `LP-TAURI-002` | Content Security Policy lets risky scripts run | medium | tauri |
+| `LP-TAURI-006` | Tauri API exposed as a global object | low | tauri |
 
 ## Dependencies and supply chain
 
@@ -86,6 +96,7 @@ Generated with `ladpock checks --markdown`.
 | `LP-SUP-003` | Workflow runs pull request code with repository secrets | high | github-actions |
 | `LP-SUP-004` | Hidden Unicode characters in code or AI instructions | high | all projects |
 | `LP-SUP-005` | Dependency doesn't exist on the package registry | critical | all projects |
+| `LP-TAURI-008` | App updates aren't safely verified | high | tauri |
 
 ## AI-generated code smells
 

@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-from . import __version__, advisories, report
+from . import __version__, advisories, report, tauri
 from .checks import REGISTRY
 from .db import DB
 from .feeds import kev
@@ -63,10 +63,17 @@ def cmd_scan(args, db: DB) -> int:
 def cmd_routes(args, db: DB) -> int:
     index = FileIndex(args.path)
     routes = analyze(index)
+    commands = tauri.analyze_commands(index) if tauri.is_tauri_project(index) else []
     if args.format == "json":
-        print(json.dumps([r.to_dict() for r in routes], indent=2))
-    else:
-        print(report.render_routes(routes, _style(args)))
+        print(json.dumps({"routes": [r.to_dict() for r in routes], "commands": [c.to_dict() for c in commands]}, indent=2))
+        return 0
+    style = _style(args)
+    if commands:
+        print(report.render_commands(commands, style))
+    if routes or not commands:
+        if commands:
+            print()
+        print(report.render_routes(routes, style))
     return 0
 
 
@@ -218,7 +225,7 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--fail-on", choices=[s.label for s in Severity if s > Severity.INFO],
                       help="exit with code 1 if anything at or above this severity is found (for CI)")
 
-    routes = sub.add_parser("routes", help="show the route matrix for a Next.js project")
+    routes = sub.add_parser("routes", help="show the route matrix (Next.js) and command matrix (Tauri)")
     routes.add_argument("path", nargs="?", default=".")
     routes.add_argument("--format", choices=["text", "json"], default="text")
 

@@ -28,6 +28,10 @@ EXPECTED_VULN = {
     "LP-SUP-001", "LP-SUP-002", "LP-SUP-003", "LP-SUP-004",
     "LP-VIBE-001", "LP-VIBE-002", "LP-VIBE-003", "LP-VIBE-004", "LP-VIBE-005",
 }
+EXPECTED_TAURI = {
+    "LP-TAURI-001", "LP-TAURI-002", "LP-TAURI-003", "LP-TAURI-004", "LP-TAURI-005", "LP-TAURI-006",
+    "LP-TAURI-007", "LP-TAURI-008", "LP-TAURI-009", "LP-TAURI-010", "LP-RUST-001", "LP-VIBE-001",
+}
 # Produced only with network access or git, covered by their own tests.
 NOT_IN_OFFLINE_FIXTURE = {"LP-SEC-004", "LP-DEP-001", "LP-SUP-005"}
 
@@ -56,8 +60,8 @@ class VulnerableFixture(unittest.TestCase):
         self.assertEqual(sorted(EXPECTED_VULN - self.ids), [])
 
     def test_catalogue_is_fully_covered(self):
-        untested = set(REGISTRY) - EXPECTED_VULN - NOT_IN_OFFLINE_FIXTURE
-        self.assertEqual(sorted(untested), [], "add these checks to the vulnerable fixture")
+        untested = set(REGISTRY) - EXPECTED_VULN - EXPECTED_TAURI - NOT_IN_OFFLINE_FIXTURE
+        self.assertEqual(sorted(untested), [], "add these checks to a vulnerable fixture")
 
     def test_secrets_are_masked_in_output(self):
         for finding in self.findings:
@@ -79,11 +83,46 @@ class VulnerableFixture(unittest.TestCase):
 
 
 class CleanFixture(unittest.TestCase):
-    def test_clean_app_has_no_findings(self):
-        with materialize("clean-next-supabase") as tmp:
-            findings, errors = run_all(_context(Path(tmp) / "clean-next-supabase"))
-        self.assertEqual(errors, [])
-        self.assertEqual([f"{f.check_id} {f.location} {f.snippet}" for f in findings], [])
+    def test_clean_apps_have_no_findings(self):
+        for name in ("clean-next-supabase", "clean-tauri"):
+            with self.subTest(name), materialize(name) as tmp:
+                findings, errors = run_all(_context(Path(tmp) / name))
+                self.assertEqual(errors, [])
+                self.assertEqual([f"{f.check_id} {f.location} {f.snippet}" for f in findings], [])
+
+
+class TauriFixture(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = materialize("vuln-tauri")
+        cls.root = Path(cls.tmp.name) / "vuln-tauri"
+        cls.findings, cls.errors = run_all(_context(cls.root))
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.tmp.cleanup()
+
+    def test_every_tauri_check_fires(self):
+        self.assertEqual(self.errors, [])
+        self.assertEqual(sorted(EXPECTED_TAURI - {f.check_id for f in self.findings}), [])
+
+    def test_stack_and_severity(self):
+        self.assertIn("tauri", detect(FileIndex(self.root)))
+        remote = [f for f in self.findings if f.check_id == "LP-TAURI-003" and "https://*" in (f.snippet or "")]
+        self.assertEqual(remote[0].severity.label, "critical")
+
+    def test_command_matrix(self):
+        from ladpock.tauri import analyze_commands
+
+        with materialize("vuln-tauri") as tmp:
+            vuln = {c.name: c for c in analyze_commands(FileIndex(Path(tmp) / "vuln-tauri"))}
+        with materialize("clean-tauri") as tmp:
+            clean = {c.name: c for c in analyze_commands(FileIndex(Path(tmp) / "clean-tauri"))}
+        self.assertEqual((vuln["save_note"].file_access, vuln["save_note"].path_check), ("write", "none"))
+        self.assertTrue(vuln["run_tool"].runs_programs)
+        self.assertEqual(vuln["run_tool"].inputs, ["tool", "args"])  # State<'_, ..> is injected, not page input
+        self.assertEqual((clean["save_note"].file_access, clean["save_note"].path_check), ("write", "dir"))
+        self.assertEqual(clean["word_count"].file_access, "none")
 
 
 class RouteMatrix(unittest.TestCase):

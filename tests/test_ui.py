@@ -154,6 +154,8 @@ class DashboardServer(unittest.TestCase):
         self.assertEqual(status, 200)
         names = {d["name"]: d for d in listing["dirs"]}
         self.assertTrue(names["clean-next-supabase"]["project"])
+        self.assertFalse(listing["project"])
+        self.assertEqual(listing["projects_inside"], 1)
         self.assertEqual(self.api("GET", "/api/browse?path=Z:%5Cdefinitely%5Cmissing")[0], 400)
 
 

@@ -19,7 +19,8 @@ regex_check(
     fix="Remove the override and fix the real certificate problem (correct hostname, or add the right CA bundle). "
         "Never disable verification in code that ships.",
     pattern=r"rejectUnauthorized\s*:\s*false|NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['\"]?0|\bverify\s*=\s*False\b|"
-            r"InsecureSkipVerify\s*:\s*true|_create_unverified_context|\bCERT_NONE\b|strict-ssl\s*=\s*false",
+            r"InsecureSkipVerify\s*:\s*true|_create_unverified_context|\bCERT_NONE\b|strict-ssl\s*=\s*false|"
+            r"danger_accept_invalid_(?:certs|hostnames)\(\s*true\s*\)",
     exts=CODE_EXT | CONFIG_EXT, include_env=True, names={".npmrc"}, cwe=("CWE-295",),
 )
 

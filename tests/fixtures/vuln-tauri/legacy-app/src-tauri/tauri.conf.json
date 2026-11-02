@@ -1,0 +1,16 @@
+{
+  "package": { "productName": "LegacyApp", "version": "0.1.0" },
+  "build": { "withGlobalTauri": false },
+  "tauri": {
+    "allowlist": {
+      "all": true,
+      "shell": { "execute": true },
+      "fs": { "scope": ["$HOME/**"] }
+    },
+    "security": {
+      "csp": "default-src 'self'; script-src 'self' 'unsafe-eval'",
+      "dangerousRemoteDomainIpcAccess": [{ "domain": "example.com", "windows": ["main"] }]
+    },
+    "updater": { "active": true, "endpoints": ["https://updates.example.com/latest.json"] }
+  }
+}

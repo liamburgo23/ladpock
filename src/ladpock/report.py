@@ -175,6 +175,35 @@ def render_routes(routes: list[Route], s: Style) -> str:
     return "\n".join(out)
 
 
+def render_commands(commands, s: Style) -> str:
+    from .tauri import command_gaps
+
+    headers = ["Command", "Page input", "Files", "Path check", "Runs", "Net", "Gaps"]
+    rows = [[c.name + ("" if c.registered else " *"), ", ".join(c.inputs) or "-", c.file_access, c.path_check,
+             "yes" if c.runs_programs else "no", "yes" if c.network else "no", ", ".join(command_gaps(c)) or "-"]
+            for c in commands]
+    widths = [max(len(h), *(len(r[i]) for r in rows)) for i, h in enumerate(headers)]
+    widths[1] = min(widths[1], 30)
+    out = [s.bold("Tauri commands"), "  ".join(h.ljust(widths[i]) for i, h in enumerate(headers)),
+           "  ".join("-" * w for w in widths)]
+    for row in rows:
+        cells = []
+        for i, cell in enumerate(row):
+            text = cell if len(cell) <= widths[i] or i == 6 else cell[: widths[i] - 1] + "~"
+            padded = text.ljust(widths[i]) if i < 6 else text
+            if (i == 3 and cell == "none") or (i == 4 and cell == "yes"):
+                padded = s(padded, "31")
+            elif i == 6 and cell != "-":
+                padded = s(padded, "33")
+            cells.append(padded)
+        out.append("  ".join(cells))
+    out.append("")
+    out.append(s.dim("Path check: dir = confirms the path is inside an allowed folder, ext = file type only, none = no check."))
+    if any(not c.registered for c in commands):
+        out.append(s.dim("* defined but not registered in generate_handler!, so the page can't call it."))
+    return "\n".join(out)
+
+
 def render_status(projects, hits: list[AdvisoryHit], new: list[AdvisoryHit], feeds, problems: dict[int, str],
                   last_opened: str | None, s: Style) -> str:
     out = [f"{s.bold('LadPock')} {__version__}", ""]

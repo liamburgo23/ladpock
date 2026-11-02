@@ -273,6 +273,12 @@ async function renderAdd(path, view) {
   pathInput.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); });
 
   const add = async (folder) => {
+    if (folder === data.path && !data.project) {
+      const hint = data.projects_inside
+        ? `It holds ${plural(data.projects_inside, "project")} of its own, so "Add every project inside" is probably what you want.`
+        : "It has no package.json, pyproject.toml, Cargo.toml or similar.";
+      if (!confirm(`This folder doesn't look like a single project. ${hint}\n\nAdd it as one project anyway?`)) return;
+    }
     const res = await api("POST", "/api/projects", { path: folder });
     toast("Project added");
     location.hash = `#/project/${res.id}`;
@@ -297,8 +303,10 @@ async function renderAdd(path, view) {
       h("div", { class: "row" }, pathInput, h("button", { class: "btn", onclick: go }, "Go")),
       h("div", { class: "row" },
         data.parent !== null ? h("button", { class: "btn small", onclick: () => renderAdd(data.parent, state.view) }, "↑ Up") : null,
-        data.path ? h("button", { class: "btn small primary", onclick: () => add(data.path) }, "Add this folder") : null,
-        data.path ? h("button", { class: "btn small", onclick: discover }, "Add every project inside") : null)),
+        // Make the likely choice the primary button: this folder if it's a project, otherwise its projects.
+        data.path ? h("button", { class: `btn small${data.project ? " primary" : ""}`, onclick: () => add(data.path) }, "Add this folder") : null,
+        data.path && data.projects_inside ? h("button", { class: `btn small${data.project ? "" : " primary"}`, onclick: discover },
+          `Add every project inside (${data.projects_inside})`) : null)),
     h("div", { class: "card flush list" }, rows.length ? rows : h("p", { class: "faint", style: "padding:16px 20px" }, "No sub-folders here."))));
 }
 
@@ -335,7 +343,10 @@ async function renderProject(id, tab, view) {
   } else {
     const deps = data.findings.filter((f) => f.check_id === "LP-DEP-001").length;
     const humanDone = data.human.filter((i) => i.checked_at).length;
-    const tabs = [["findings", `Findings (${data.findings.length})`], ["routes", "Routes"], ["deps", `Dependencies (${deps})`],
+    const isTauri = p.stack.includes("Tauri");
+    const isNext = p.stack.includes("Next.js");
+    const entryLabel = isTauri && isNext ? "Routes & commands" : isTauri ? "Commands" : "Routes";
+    const tabs = [["findings", `Findings (${data.findings.length})`], ["routes", entryLabel], ["deps", `Dependencies (${deps})`],
       ["human", `Needs a human (${humanDone}/${data.human.length})`], ["history", "History"]];
     parts.push(h("nav", { class: "tabs", "aria-label": "Project sections" }, tabs.map(([key, label]) =>
       h("a", { href: `#/project/${id}/${key}`, "aria-current": key === tab ? "page" : null }, label))));
@@ -535,13 +546,17 @@ async function drawRoutes(container, id, view) {
   let data;
   try { data = await api("GET", `/api/projects/${id}/routes`); } catch (e) { container.replaceChildren(h("p", { class: "muted" }, e.message)); return; }
   if (view !== state.view) return;
-  if (!data.routes.length) {
-    container.replaceChildren(h("div", { class: "card empty" }, h("h2", null, "No routes found"),
-      h("p", { class: "muted" }, "The route matrix currently understands Next.js (App Router, Pages API and server actions). More frameworks are planned.")));
+  if (!data.routes.length && !data.commands.length) {
+    container.replaceChildren(h("div", { class: "card empty" }, h("h2", null, "No routes or commands found"),
+      h("p", { class: "muted" }, "This view currently understands Next.js (App Router, Pages API and server actions) and Tauri commands. More frameworks are planned.")));
     return;
   }
-  const cell = (value) => h("td", { class: value === "no" ? "cell-no" : value === "yes" || value === "sig" || value === "rls" ? "cell-yes" : value === "mw" ? "cell-mid" : "faint" }, value);
-  container.replaceChildren(
+  const cell = (value) => h("td", { class: value === "no" || value === "none" ? "cell-no" : value === "yes" || value === "sig" || value === "rls" || value === "dir" ? "cell-yes" : value === "mw" || value === "ext" ? "cell-mid" : "faint" }, value);
+  container.replaceChildren();
+  if (data.commands.length) container.append(...commandsTable(data.commands, cell));
+  if (!data.routes.length) return;
+  container.append(
+    h("h2", null, "Routes"),
     h("div", { class: "card flush table-wrap" }, h("table", null,
       h("thead", null, h("tr", null, ["Method", "Path", "Auth", "Owner check", "Validation", "Rate limit", "Gaps"].map((t) => h("th", null, t)))),
       h("tbody", null, data.routes.map((r) => h("tr", null,
@@ -549,6 +564,23 @@ async function drawRoutes(container, id, view) {
         cell(r.auth), cell(r.owner), cell(r.validation), cell(r.rate_limit),
         h("td", { style: r.gaps.length ? "color:var(--medium)" : "" }, r.gaps.join(", ") || "–")))))),
     h("p", { class: "faint" }, "Auth: yes = checked in the handler, mw = only in middleware, sig = webhook signature. Owner: rls = relies on Supabase Row Level Security. This is read from your current code and is heuristic: treat “no” as “go and look”."));
+}
+
+function commandsTable(commands, cell) {
+  const yesNo = (flag) => h("td", { class: flag ? "cell-mid" : "faint" }, flag ? "yes" : "no");
+  return [
+    h("h2", null, "Tauri commands"),
+    h("p", { class: "muted" }, "Everything the web page inside your app can ask the Rust side to do. If script in the page is ever compromised, this is what it can reach."),
+    h("div", { class: "card flush table-wrap" }, h("table", null,
+      h("thead", null, h("tr", null, ["Command", "Page input", "Files", "Path check", "Runs programs", "Network", "Gaps"].map((t) => h("th", null, t)))),
+      h("tbody", null, commands.map((c) => h("tr", null,
+        h("td", { class: "mono", title: `${c.file}:${c.line}` }, c.name, c.registered ? null : h("span", { class: "faint" }, " (unregistered)")),
+        h("td", { class: "mono faint" }, c.inputs.join(", ") || "–"),
+        h("td", { class: c.file_access === "none" ? "faint" : "" }, c.file_access),
+        cell(c.path_check), yesNo(c.runs_programs), yesNo(c.network),
+        h("td", { style: c.gaps.length ? "color:var(--medium)" : "" }, c.gaps.join(", ") || "–")))))),
+    h("p", { class: "faint" }, "Path check: dir = confirms the path is inside an allowed folder, ext = only checks the file type, none = uses whatever it's given. Heuristic: hover a command to see where it's defined."),
+  ];
 }
 
 async function drawDeps(container, id, view) {

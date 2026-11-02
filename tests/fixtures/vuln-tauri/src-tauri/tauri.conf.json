@@ -1,0 +1,19 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "VulnTauri",
+  "version": "0.1.0",
+  "identifier": "com.example.vulntauri",
+  "app": {
+    "withGlobalTauri": true,
+    "windows": [{ "label": "main", "title": "VulnTauri" }],
+    "security": {
+      "csp": null,
+      "assetProtocol": { "enable": true, "scope": ["**"] }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": ["http://updates.example.com/{{target}}/{{current_version}}"]
+    }
+  }
+}

@@ -15,12 +15,12 @@ LABELS = {
     "clerk": "Clerk", "prisma": "Prisma", "drizzle": "Drizzle", "openai": "OpenAI",
     "anthropic": "Anthropic", "ai-sdk": "Vercel AI SDK", "fastapi": "FastAPI", "flask": "Flask",
     "django": "Django", "node": "Node.js", "python": "Python", "docker": "Docker",
-    "github-actions": "GitHub Actions",
+    "github-actions": "GitHub Actions", "tauri": "Tauri", "rust": "Rust",
 }
 
 # Stacks with dedicated, framework-aware checks. Everything else still gets the
 # generic checks (secrets, dependencies, injection patterns, config).
-DEEP_PACKS = {"nextjs", "react", "supabase", "firebase", "stripe", "github-actions"}
+DEEP_PACKS = {"nextjs", "react", "supabase", "firebase", "stripe", "github-actions", "tauri"}
 
 _NPM = {
     "next": "nextjs", "react": "react", "vite": "vite", "express": "express", "fastify": "fastify",
@@ -29,7 +29,7 @@ _NPM = {
     "firebase": "firebase", "firebase-admin": "firebase", "stripe": "stripe", "@stripe/stripe-js": "stripe",
     "next-auth": "nextauth", "@auth/core": "nextauth", "@clerk/nextjs": "clerk", "prisma": "prisma",
     "@prisma/client": "prisma", "drizzle-orm": "drizzle", "openai": "openai",
-    "@anthropic-ai/sdk": "anthropic", "ai": "ai-sdk",
+    "@anthropic-ai/sdk": "anthropic", "ai": "ai-sdk", "@tauri-apps/api": "tauri", "@tauri-apps/cli": "tauri",
 }
 _PY = {
     "fastapi": "fastapi", "flask": "flask", "django": "django", "supabase": "supabase", "stripe": "stripe",
@@ -94,6 +94,12 @@ def detect(index: FileIndex) -> list[str]:
             add("firebase")
         elif name == "Dockerfile":
             add("docker")
+        elif name in ("tauri.conf.json", "tauri.conf.json5", "Tauri.toml"):
+            add("tauri")
+        elif name == "Cargo.toml":
+            add("rust")
+            if re.search(r"(?m)^\s*tauri\s*=", index.read(rel) or ""):
+                add("tauri")
         if rel.startswith("supabase/") or "/supabase/migrations/" in rel:
             add("supabase")
         if rel.startswith(".github/workflows/"):

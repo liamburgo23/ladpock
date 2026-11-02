@@ -16,6 +16,7 @@ def refresh(db: DB, cves: list[str]) -> None:
     cached = db.epss_scores(cves)
     stale = sorted({c for c in cves if c not in cached or (age_seconds(cached[c]["fetched_at"]) or 1e9) > 86400})
     if not stale:
+        db.save_feed(NAME, fetched=True)  # everything we need is already fresh
         return
     rows = []
     try:

@@ -1,0 +1,10 @@
+{
+  "identifier": "default",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "dialog:allow-save",
+    { "identifier": "fs:allow-read-file", "allow": [{ "path": "$APPDATA/notes/**" }] }
+  ]
+}

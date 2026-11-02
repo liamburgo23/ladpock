@@ -3,6 +3,9 @@
 This is not a parser. It strips comments, matches brackets and splits call
 arguments while skipping over string literals, which is what the route matrix
 and React checks need. Offsets are preserved so line numbers stay correct.
+
+Rust code passes quotes='"', because a single quote there usually starts a
+lifetime ('_, 'a) rather than a string.
 """
 
 from __future__ import annotations
@@ -11,7 +14,7 @@ _PAIRS = {"(": ")", "{": "}", "[": "]"}
 _QUOTES = "'\"`"
 
 
-def strip_comments(code: str) -> str:
+def strip_comments(code: str, quotes: str = _QUOTES) -> str:
     out: list[str] = []
     i, n = 0, len(code)
     state: str | None = None
@@ -29,7 +32,7 @@ def strip_comments(code: str) -> str:
                 out.append("  ")
                 i += 2
                 continue
-            if c in _QUOTES:
+            if c in quotes:
                 state = c
             out.append(c)
             i += 1
@@ -55,14 +58,15 @@ def strip_comments(code: str) -> str:
             out.append(code[i : i + 2])
             i += 2
             continue
-        if c == state or (c == "\n" and state in "'\""):
+        # JS strings can't span lines, so recover from an unterminated one; Rust strings can.
+        if c == state or (c == "\n" and state in "'\"" and "'" in quotes):
             state = None
         out.append(c)
         i += 1
     return "".join(out)
 
 
-def match_bracket(code: str, open_idx: int) -> int:
+def match_bracket(code: str, open_idx: int, quotes: str = _QUOTES) -> int:
     """Index of the bracket closing the one at ``open_idx``, or -1."""
     stack: list[str] = []
     i, n = open_idx, len(code)
@@ -77,7 +81,7 @@ def match_bracket(code: str, open_idx: int) -> int:
                 state = None
             i += 1
             continue
-        if c in _QUOTES:
+        if c in quotes:
             state = c
         elif c in _PAIRS:
             stack.append(_PAIRS[c])
@@ -90,7 +94,7 @@ def match_bracket(code: str, open_idx: int) -> int:
     return -1
 
 
-def split_args(code: str, open_idx: int, close_idx: int) -> list[str]:
+def split_args(code: str, open_idx: int, close_idx: int, quotes: str = _QUOTES) -> list[str]:
     """Top-level comma-separated arguments between a pair of brackets."""
     args: list[str] = []
     depth = 0
@@ -105,7 +109,7 @@ def split_args(code: str, open_idx: int, close_idx: int) -> list[str]:
                 continue
             if c == state:
                 state = None
-        elif c in _QUOTES:
+        elif c in quotes:
             state = c
         elif c in _PAIRS:
             depth += 1
