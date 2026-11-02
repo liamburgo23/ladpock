@@ -1,0 +1,95 @@
+# LadPock data-flow rules for Opengrep / Semgrep CE (Apache-2.0, part of LadPock).
+# These follow user input from the request to a dangerous sink within a file,
+# which line-based patterns can't do.
+rules:
+  - id: js-sql-injection
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Request data flows into a raw SQL query. Use parameters or a query builder instead.
+    metadata:
+      title: User input reaches a raw SQL query
+      category: injection
+      confidence: medium
+      cwe: ["CWE-89: SQL Injection"]
+      fix: Pass values as parameters ($1 placeholders, tagged sql`` templates, or the ORM's query builder).
+    pattern-sources:
+      - pattern: $REQ.query
+      - pattern: $REQ.body
+      - pattern: $REQ.params
+      - pattern: (await $REQ.json())
+      - pattern: $PARAMS.get(...)
+    pattern-sinks:
+      - pattern: $DB.query($SQL, ...)
+      - pattern: $DB.$queryRawUnsafe($SQL, ...)
+      - pattern: $DB.$executeRawUnsafe($SQL, ...)
+      - pattern: $DB.raw($SQL, ...)
+    pattern-sanitizers:
+      - pattern: parseInt(...)
+      - pattern: Number(...)
+
+  - id: js-ssrf
+    mode: taint
+    languages: [javascript, typescript]
+    severity: WARNING
+    message: Request data decides which URL the server fetches. Check it against an allowlist of hosts first.
+    metadata:
+      title: User input decides which URL the server calls
+      category: injection
+      confidence: medium
+      cwe: ["CWE-918: Server-Side Request Forgery (SSRF)"]
+      fix: Validate the URL against an allowlist of hosts and block private IP ranges.
+    pattern-sources:
+      - pattern: $REQ.query
+      - pattern: $REQ.body
+      - pattern: (await $REQ.json())
+      - pattern: $PARAMS.get(...)
+    pattern-sinks:
+      - pattern: fetch($URL, ...)
+      - pattern: axios.get($URL, ...)
+      - pattern: axios.post($URL, ...)
+      - pattern: axios($URL, ...)
+
+  - id: js-command-injection
+    mode: taint
+    languages: [javascript, typescript]
+    severity: ERROR
+    message: Request data reaches a shell command. Use execFile/spawn with an argument array and validate the values.
+    metadata:
+      title: User input reaches a shell command
+      category: injection
+      confidence: high
+      cwe: ["CWE-78: OS Command Injection"]
+      fix: Use execFile or spawn with an array of arguments, never exec with a built string.
+    pattern-sources:
+      - pattern: $REQ.query
+      - pattern: $REQ.body
+      - pattern: (await $REQ.json())
+      - pattern: $PARAMS.get(...)
+    pattern-sinks:
+      - pattern: exec($CMD, ...)
+      - pattern: execSync($CMD, ...)
+      - pattern: $CP.exec($CMD, ...)
+      - pattern: $CP.execSync($CMD, ...)
+
+  - id: py-sql-injection
+    mode: taint
+    languages: [python]
+    severity: ERROR
+    message: Request data flows into a raw SQL string. Pass it as a query parameter instead.
+    metadata:
+      title: User input reaches a raw SQL query
+      category: injection
+      confidence: medium
+      cwe: ["CWE-89: SQL Injection"]
+      fix: Use cursor.execute(sql, params) or SQLAlchemy bound parameters.
+    pattern-sources:
+      - pattern: request.args.get(...)
+      - pattern: request.form.get(...)
+      - pattern: request.json
+      - pattern: request.query_params.get(...)
+    pattern-sinks:
+      - pattern: $CUR.execute($SQL, ...)
+      - pattern: text($SQL)
+    pattern-sanitizers:
+      - pattern: int(...)

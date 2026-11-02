@@ -1,0 +1,14 @@
+{
+  "name": "clean-next-supabase",
+  "private": true,
+  "dependencies": {
+    "next": "15.5.0",
+    "react": "19.1.0",
+    "@supabase/ssr": "0.7.0",
+    "@supabase/supabase-js": "2.57.0",
+    "@anthropic-ai/sdk": "0.60.0",
+    "@upstash/ratelimit": "2.0.6",
+    "stripe": "18.5.0",
+    "zod": "4.1.0"
+  }
+}

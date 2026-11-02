@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ladpock"
+version = "0.1.0"
+description = "A free, local security checker for vibe-coded projects."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{ name = "liamburgo23" }]
+keywords = ["security", "sast", "sca", "vibe-coding", "nextjs", "supabase", "appsec"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+]
+# Deliberately empty: LadPock uses only the Python standard library so that
+# installing a security tool doesn't pull in a tree of third-party code.
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/liamburgo23/ladpock"
+Issues = "https://github.com/liamburgo23/ladpock/issues"
+
+[project.scripts]
+ladpock = "ladpock.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+ladpock = ["rules/opengrep/*.yaml"]

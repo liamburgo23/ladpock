@@ -1,0 +1,35 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        python: ["3.11", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      # Pinned to commit SHAs on purpose: tags can be moved (see LP-SUP-002).
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Unit and fixture tests (offline)
+        shell: bash
+        env:
+          PYTHONPATH: ${{ runner.os == 'Windows' && 'src;tests' || 'src:tests' }}
+        run: python -m unittest discover -s tests -v
+      - name: LadPock scans itself
+        shell: bash
+        env:
+          PYTHONPATH: src
+        run: python -m ladpock scan . --offline --no-external --fail-on high
