@@ -124,6 +124,19 @@ class CommittedEnvFile(unittest.TestCase):
         self.assertEqual(hits[0].file, ".env.local")
         self.assertFalse(any(f.check_id == "LP-SEC-005" and f.file == ".env.local" for f in findings))
 
+    def test_fixture_env_only_flagged_with_real_secret(self):
+        with materialize("vuln-next-supabase") as tmp:
+            root = Path(tmp) / "repo"
+            (root / "tests" / "fixtures").mkdir(parents=True)
+            (root / "tests" / "fixtures" / ".env.local").write_text("API_URL=http://localhost:3000\n", encoding="utf-8")
+            secret = (Path(tmp) / "vuln-next-supabase" / "lib" / "config.ts").read_text(encoding="utf-8")
+            (root / "tests" / ".env").write_text(secret, encoding="utf-8")
+            subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+            subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+            findings, _ = run_all(_context(root))
+        flagged = {f.file for f in findings if f.check_id == "LP-SEC-004"}
+        self.assertEqual(flagged, {"tests/.env"})
+
 
 class OfflinePipeline(unittest.TestCase):
     def test_scan_offline_scores_and_stores(self):

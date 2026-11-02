@@ -6,7 +6,7 @@ import fnmatch
 import re
 from typing import Iterator
 
-from ..files import JS_EXT, basename, is_env_file, is_env_template
+from ..files import JS_EXT, basename, is_env_file, is_env_template, is_test_path
 from ..masking import JWT, LOCAL_DB_HOSTS, SECRET_PATTERNS, is_placeholder, jwt_claims
 from ..models import Finding, Severity
 from .base import CheckInfo, ScanContext, check
@@ -135,6 +135,8 @@ def env_committed(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
         if is_env_file(name) and not is_env_template(name):
             text = ctx.index.read(rel) or ""
             has_secret = any(_classify_secret(line) for line in text.splitlines())
+            if is_test_path(rel) and not has_secret:
+                continue  # test fixtures often commit env files on purpose; flag them only if they hold a real key
             yield ctx.finding(info, rel, None, None, severity=Severity.CRITICAL if has_secret else Severity.HIGH,
                               confidence="high")
 

@@ -204,7 +204,7 @@ def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bo
         except FeedError as exc:
             log(f"warning: couldn't reach OSV ({exc}); using results from the last online run")
             feeds.append(FeedStatus("OSV", False, "unreachable, using results from the last online run"))
-    elif not components:
+    elif not offline:
         feeds.append(FeedStatus("OSV", True, "no lockfiles found, nothing to check"))
     kev_map = kev.load(db)
     hits = advisories.hits(db, kev_map, project_id)
