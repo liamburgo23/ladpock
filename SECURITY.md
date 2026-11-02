@@ -22,7 +22,14 @@ follows; a change that breaks one is a security bug.
    registries) and CVE IDs (to FIRST's EPSS API) leave your machine. Never source code. There's no telemetry.
 6. **HTTPS only.** The feed client refuses plain HTTP and caps response sizes.
 7. **No third-party runtime dependencies.** LadPock uses only the Python standard library.
-8. **Optional scanners are external programs.** Gitleaks, OSV-Scanner and Opengrep are found on your PATH (or in
+8. **The dashboard is reachable only by you.** `ladpock ui` binds to 127.0.0.1. Every API call needs a random
+   per-launch token sent in a header (never a cookie). The token is handed over in the URL fragment, which
+   browsers don't send to servers. The `Host` header must be 127.0.0.1 or localhost on the right port, which defeats
+   DNS rebinding. Requests carrying another site's `Origin` or a cross-site `Sec-Fetch-Site` are refused, and no
+   CORS headers are ever sent. Writes must be JSON. Static files are served from an allowlist. The page has a strict
+   Content-Security-Policy and builds its DOM with `textContent`, so code from a scanned repository can't inject
+   HTML or script. These rules are covered by `tests/test_ui.py`.
+9. **Optional scanners are external programs.** Gitleaks, OSV-Scanner and Opengrep are found on your PATH (or in
    LadPock's data folder) and run as subprocesses with timeouts. Install them from their official releases and
    verify the checksums they publish.
 

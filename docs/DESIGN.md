@@ -73,15 +73,21 @@ assistant "fixing" a finding by adding an ignore comment is exactly the kind of 
 - **Fixtures use placeholders for secrets**, generated at test time, so the repo never contains secret-looking strings.
 - **Route analysis is heuristic** and reports `?`/`no` as "go and look", with confidence on each finding.
 
+## Dashboard (built in 0.2.0)
+
+`ladpock ui` runs `ui/server.py`: a standard-library `ThreadingHTTPServer` on 127.0.0.1 serving a single-page app
+from `ui/static/` (plain HTML, CSS and JS, no build step) and a JSON API. Scans run in a background thread, and the
+page polls `/api/jobs/<id>` for progress. Each request opens its own SQLite connection, and the database uses WAL
+mode so the page can read while a scan writes. The security rules are listed in [SECURITY.md](../SECURITY.md) and
+tested in `tests/test_ui.py`.
+
 ## Next milestones
 
-1. **Local dashboard.** A localhost-only web UI over the same engine. Hardening required: bind to 127.0.0.1,
-   check the `Host` header (DNS rebinding), use a random per-launch token, no CORS.
-2. **Local AI review (overnight).** Ollama or any OpenAI-compatible local endpoint. A resumable job queue in SQLite,
+1. **Local AI review (overnight).** Ollama or any OpenAI-compatible local endpoint. A resumable job queue in SQLite,
    incremental by file hash, scheduled with the OS (Task Scheduler on Windows), only when plugged in. Local findings
    are "leads" that must quote real lines (grounding check) and can never suppress a finding.
-3. **External AI review (optional, your own key).** Separate toggle, budget cap, and a per-project "never send"
+2. **External AI review (optional, your own key).** Separate toggle, budget cap, and a per-project "never send"
    switch. Secrets are redacted before sending. Can be used only to escalate local leads.
-4. **More packs.** Express/Fastify, FastAPI/Django, SvelteKit, Remix. Each one adds a route parser, rules and fixtures.
-5. **Scanner installer.** Downloads pinned versions by SHA-256 with a cooldown before adopting new releases.
-6. **Live probes.** Localhost by default, ownership-verified otherwise. Headers, CORS, exposed paths, a small rate-limit burst.
+3. **More packs.** Express/Fastify, FastAPI/Django, SvelteKit, Remix. Each one adds a route parser, rules and fixtures.
+4. **Scanner installer.** Downloads pinned versions by SHA-256 with a cooldown before adopting new releases.
+5. **Live probes.** Localhost by default, ownership-verified otherwise. Headers, CORS, exposed paths, a small rate-limit burst.

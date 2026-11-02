@@ -14,7 +14,7 @@ from . import cvss
 from .db import DB
 from .feeds import osv
 from .models import Component, Severity
-from .timeutil import parse_iso
+from .timeutil import iso, parse_iso
 
 _GHSA_SEVERITY = {"LOW": Severity.LOW, "MODERATE": Severity.MEDIUM, "MEDIUM": Severity.MEDIUM,
                   "HIGH": Severity.HIGH, "CRITICAL": Severity.CRITICAL}
@@ -124,6 +124,7 @@ def refresh_project(db: DB, project_id: int, components: list[Component]) -> Non
                 continue  # detail fetch failed this time; it will be retried next run
             rows.append((vuln_id, comp, fixed_version(json.loads(row["affected"] or "[]"), comp)))
     db.sync_project_advisories(project_id, rows)
+    db.set_meta("osv_checked_at", iso())
 
 
 def hits(db: DB, kev: dict[str, str], project_id: int | None = None) -> list[AdvisoryHit]:

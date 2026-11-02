@@ -180,6 +180,13 @@ def cmd_doctor(args, db: DB) -> int:
     return 0
 
 
+def cmd_ui(args, db: DB) -> int:
+    from .ui.server import serve
+
+    db.close()  # the server opens its own connection per request
+    return serve(port=args.port, open_browser=not args.no_browser)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="ladpock",
@@ -237,13 +244,17 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor = sub.add_parser("doctor", help="check your setup and optional scanners")
     doctor.add_argument("path", nargs="?")
+
+    ui = sub.add_parser("ui", help="open the dashboard in your browser (only reachable from this computer)")
+    ui.add_argument("--port", type=int, default=8765, help="preferred port (default 8765; another is used if busy)")
+    ui.add_argument("--no-browser", action="store_true", help="print the link instead of opening a browser")
     return parser
 
 
 COMMANDS = {
     None: cmd_status, "status": cmd_status, "scan": cmd_scan, "routes": cmd_routes, "fix-prompt": cmd_fix_prompt,
     "advisories": cmd_advisories, "suppress": cmd_suppress, "projects": cmd_projects, "checks": cmd_checks,
-    "doctor": cmd_doctor,
+    "doctor": cmd_doctor, "ui": cmd_ui,
 }
 
 

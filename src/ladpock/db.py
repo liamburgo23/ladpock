@@ -86,6 +86,12 @@ CREATE TABLE IF NOT EXISTS registry_cache (
     checked_at TEXT NOT NULL,
     PRIMARY KEY (ecosystem, name)
 );
+CREATE TABLE IF NOT EXISTS human_checks (
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    item_id TEXT NOT NULL,
+    checked_at TEXT NOT NULL,
+    PRIMARY KEY (project_id, item_id)
+);
 CREATE TABLE IF NOT EXISTS suppressions (
     project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     ref TEXT NOT NULL,
@@ -103,9 +109,11 @@ def path_key(path: Path) -> str:
 
 class DB:
     def __init__(self, path: str | Path | None = None):
-        self.conn = sqlite3.connect(str(path or db_path()))
+        # The dashboard reads while a scan writes from another thread, so wait for locks and use WAL.
+        self.conn = sqlite3.connect(str(path or db_path()), timeout=30)
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA foreign_keys = ON")
+        self.conn.execute("PRAGMA journal_mode = WAL")
         self.conn.executescript(SCHEMA)
         self.conn.commit()
 
@@ -294,6 +302,29 @@ class DB:
             "ON CONFLICT(ecosystem, name) DO UPDATE SET found = excluded.found, checked_at = excluded.checked_at",
             (ecosystem, name, int(found), iso()),
         )
+        self.conn.commit()
+
+    def get_project_by_id(self, project_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM projects WHERE id = ?", (project_id,)).fetchone()
+
+    def remove_project_by_id(self, project_id: int) -> bool:
+        cur = self.conn.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    # "needs a human" checklist
+    def human_checks(self, project_id: int) -> dict[str, str]:
+        rows = self.conn.execute("SELECT item_id, checked_at FROM human_checks WHERE project_id = ?", (project_id,)).fetchall()
+        return {r["item_id"]: r["checked_at"] for r in rows}
+
+    def set_human_check(self, project_id: int, item_id: str, checked: bool) -> None:
+        if checked:
+            self.conn.execute(
+                "INSERT OR REPLACE INTO human_checks (project_id, item_id, checked_at) VALUES (?, ?, ?)",
+                (project_id, item_id, iso()),
+            )
+        else:
+            self.conn.execute("DELETE FROM human_checks WHERE project_id = ? AND item_id = ?", (project_id, item_id))
         self.conn.commit()
 
     # suppressions

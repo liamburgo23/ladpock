@@ -61,6 +61,24 @@ pip install .
 
 ## Use
 
+### Dashboard
+
+```bash
+ladpock ui
+```
+
+This opens LadPock in your browser. You can add projects by picking their folders, run scans with Quick, Standard
+or Full profiles, and browse findings by severity with filters and search. Each finding has a copy-fix-prompt button
+and an "accept risk" option that needs a reason and expires. There are also tabs for the Next.js route matrix,
+vulnerable dependencies (with "actively exploited" flags), the "needs a human" checklist (LadPock remembers what
+you've ticked) and scan history. Vulnerability data refreshes every time you open it, and a banner lists anything
+new that affects your projects.
+
+The dashboard only listens on `127.0.0.1`, and every request needs a private key that's in the link printed in your
+terminal. It changes each time you start it. See [SECURITY.md](SECURITY.md) for the details.
+
+### Command line
+
 ```bash
 ladpock scan path/to/your-project
 ```
@@ -74,6 +92,7 @@ you've scanned before.
 
 | Command | What it does |
 |---|---|
+| `ladpock ui` | Open the dashboard (`--port`, `--no-browser`) |
 | `ladpock scan [path]` | Scan a project (`--profile quick\|standard\|full`, `--format text\|json\|sarif`, `-o file`) |
 | `ladpock` / `ladpock status` | Refresh feeds, show new advisories and your projects' grades |
 | `ladpock routes [path]` | Show the Next.js route matrix |
@@ -136,8 +155,8 @@ it. Secrets are masked before anything is stored.
 
 ## Roadmap
 
-- Local web dashboard (localhost-only, token-protected)
 - Local AI review overnight (Ollama), with optional escalation to an external model using your own key
+- A Tauri pack (CSP, capabilities, exposed commands) and Rust checks
 - More framework packs: Express, FastAPI, SvelteKit, Remix
 - Pinned, checksum-verified installer for the optional scanners
 - Safe live probes against your own running app (headers, CORS, rate limits)

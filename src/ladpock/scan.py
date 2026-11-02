@@ -235,8 +235,21 @@ def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bo
 
     categories = settings["categories"] if settings["categories"] is not None else set(CATEGORIES)
     card = scoring.score(findings, categories)
-    db.save_scan(project_id, started, profile, card.overall, card.grade, stack, findings,
-                 {"counts": card.counts, "routes": len(routes), "dependencies": len(components)})
+    deep, generic = coverage(stack)
+    summary = {
+        "counts": card.counts,
+        "categories": [{"key": c.key, "name": c.name, "score": c.score, "grade": c.grade, "counts": c.counts}
+                       for c in card.categories],
+        "routes": len(routes),
+        "dependencies": len(components),
+        "checks_run": checks_run,
+        "suppressed": len(suppressed),
+        "coverage": {"deep": deep, "generic": generic},
+        "feeds": [vars(f) for f in feeds],
+        "scanners": [{"name": s.name, "available": s.available, "ran": s.ran, "error": s.error} for s in scanners],
+        "errors": errors[:20],
+    }
+    db.save_scan(project_id, started, profile, card.overall, card.grade, stack, findings, summary)
     return ScanResult(
         root=root, project_id=project_id, stack=stack, profile=profile, findings=findings, suppressed=suppressed,
         routes=routes, advisory_hits=hits, scorecard=card, scanners=scanners, feeds=feeds, components=len(components),
