@@ -99,6 +99,11 @@ class Grounding(unittest.TestCase):
         self.assertIsNone(ground(self.issue(quote="await db.deleteEverything();"), self.lines))
         self.assertIsNone(ground(self.issue(quote="order"), self.lines))
 
+    def test_quotes_of_comments_are_dropped(self):
+        lines = {1: "// The token in the address is the key; nothing is stored.", 2: "const token = readToken();"}
+        self.assertIsNone(ground(self.issue(quote="The token in the address is the key", line=1), lines))
+        self.assertIsNotNone(ground(self.issue(quote="const token = readToken();", line=2), lines))
+
     def test_critical_is_capped_and_bad_category_mapped(self):
         lead = ground(self.issue(severity="critical", category="made-up"), self.lines)
         self.assertEqual((lead.severity, lead.category), ("high", "vibe"))

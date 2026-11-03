@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from ..models import CATEGORIES
 
 _LINE_PREFIX = re.compile(r"^\s*\d+\s*\|\s?")
+_COMMENT = re.compile(r"^(?://|#|/\*|\*|<!--|--|\"\"\"|''')")
 SEVERITY_CAP = {"critical": "high"}  # AI leads top out at high; only the scanner can say critical
 MIN_QUOTE = 8
 
@@ -53,6 +54,8 @@ def ground(issue: dict, lines: dict[int, str]) -> Lead | None:
     except (TypeError, ValueError):
         claimed = 0
     line = min(candidates, key=lambda n: abs(n - claimed))
+    if _COMMENT.match(normalized[line]):
+        return None  # a lead has to point at code; comments describe intent, they don't do anything
     severity = str(issue.get("severity", "medium")).lower()
     severity = SEVERITY_CAP.get(severity, severity if severity in ("high", "medium", "low") else "medium")
     category = str(issue.get("category", "vibe"))
