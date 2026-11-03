@@ -157,6 +157,38 @@ generic-only stacks, no lockfile, no AI review, and unconfirmed manual checks. T
 - **Key (`ai/keys.py`):** stored in Windows Credential Manager through ctypes. Elsewhere, or if you prefer, the SDK's
   own resolution is used (`ANTHROPIC_API_KEY` or an `ant auth login` profile).
 
+## Wider coverage (0.8.0)
+
+**Route matrix for server frameworks (`server_routes.py`).** Each endpoint becomes the same `Route` record as a
+Next.js handler, so the access-control and abuse checks need no per-framework copies.
+- **Express, Fastify, Hono and Koa:** reads `x.get('/path', ...middleware, handler)`, `.route('/x').get().post()`
+  chains and Fastify `route({...})` objects. Handlers passed by name are followed to their definition. `app.use` and
+  `router.use` middleware apply to the routes after them, with path prefixes, but mounted routers aren't counted as
+  auth.
+- **NestJS:** reads `@Controller` prefixes and method decorators. Guards above or below `@Controller` count, as do
+  `@Public()`, global `APP_GUARD`, and typed `@Body()` DTOs with a global `ValidationPipe`.
+- **FastAPI, Flask and Django:** decorators, `Depends(...)` and router `dependencies`, `APIRouter` and blueprint
+  prefixes, Flask-Limiter. For Django: function views, class-based views, DRF viewsets registered with a router,
+  `urls.py` paths and DRF's default permission classes.
+- Datastore calls are recognised by their receiver (capitalised models, `db`, `prisma`, repositories, raw SQL), so
+  `openai.chat.completions.create()` isn't mistaken for a database write.
+
+**Check modules.** Each new pack has a vulnerable fixture that every check must fire on and a clean twin that must
+stay silent.
+- `checks/web.py`: one check per mistake, with a pattern per language (deserialisation, raw HTML in templates,
+  template injection, XXE, path traversal, NoSQL injection, prototype pollution, mass assignment, CSRF and more).
+- `checks/infra.py`: Dockerfiles, Compose, Kubernetes, Terraform and GitHub Actions. Firewall rules are judged by
+  their enclosing block, so egress and HTTPS-only rules are left alone.
+- `checks/apps.py`: Electron, Android, iOS, React Native and Flutter.
+- `checks/languages.py`: Spring, Rails, PHP, ASP.NET and Go framework settings.
+
+The existing SQL-injection, command-injection, CORS, randomness, hashing and TLS checks gained each language's
+spelling instead of separate per-language IDs, so a finding means the same thing whatever the stack.
+
+**Secrets.** `masking.SECRET_PATTERNS` covers more than 50 provider formats, and env-style assignments
+(`ENV X=...`, `export X=...`) are masked too. Format tests build their samples at runtime from a fixed seed, so no
+realistic token is committed.
+
 ## Next milestones
 
 1. **Paid online scanners.** Optional integrations with commercial scanners using your own account, behind the same

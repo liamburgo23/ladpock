@@ -496,7 +496,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         if self.command != "HEAD":
-            self.wfile.write(body)
+            try:
+                self.wfile.write(body)
+            except (BrokenPipeError, ConnectionAbortedError, ConnectionResetError):
+                pass  # the browser navigated away mid-response; nothing to report
 
     def _json(self, status: int, payload: object) -> None:
         self._send(status, json.dumps(payload).encode("utf-8"), "application/json; charset=utf-8")

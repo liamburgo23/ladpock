@@ -1238,7 +1238,7 @@ async function drawRoutes(container, id, view) {
   if (view !== state.view) return;
   if (!data.routes.length && !data.commands.length) {
     container.replaceChildren(h("div", { class: "card empty" }, h("h2", null, "No routes or commands found"),
-      h("p", { class: "muted" }, "This view currently understands Next.js (App Router, Pages API and server actions) and Tauri commands. More frameworks are planned.")));
+      h("p", { class: "muted" }, "This view understands Next.js, Express, Fastify, Hono, Koa, NestJS, FastAPI, Flask and Django routes, and Tauri commands.")));
     return;
   }
   const cell = (value) => h("td", { class: value === "no" || value === "none" ? "cell-no" : value === "yes" || value === "sig" || value === "rls" || value === "dir" ? "cell-yes" : value === "mw" || value === "ext" ? "cell-mid" : "faint" }, value);
@@ -1446,7 +1446,8 @@ const HELP = [
     "Confidence is how sure LadPock is that it's real. High means the pattern is unambiguous, for example a live key in the code. Medium means it's probably real. Low means it's a heuristic that needs a human look, for example “this route doesn't seem to check ownership”.",
   ]],
   ["coverage", "Deep checks and generic checks", [
-    "Some stacks have dedicated packs that understand how the framework works: Next.js, React, Supabase, Firebase, Stripe, GitHub Actions and Tauri. Everything else gets the generic checks: secrets, dependencies, injection patterns, config and AI code smells.",
+    "Some stacks have dedicated packs that understand how the framework works: Next.js, React, Supabase, Firebase and Stripe; Express, Fastify, Hono, Koa and NestJS; FastAPI, Flask and Django; Tauri and Electron; Android, iOS, React Native and Flutter; and Docker, Kubernetes, Terraform and GitHub Actions.",
+    "Go, PHP, Ruby, Java/Kotlin, C# and Rust get language-specific versions of the injection, crypto and config checks. Everything else gets the generic checks: secrets, dependencies, injection patterns, config and AI code smells.",
     "Each project page lists which stacks got deep checks, so you know how thorough a scan was.",
   ]],
   ["ai", "The local AI review", [
@@ -1478,7 +1479,7 @@ const HELP = [
     "Versions only change when LadPock is updated, in a reviewed change. If you installed a scanner yourself, LadPock uses yours and leaves it alone.",
   ]],
   ["routes", "Routes and commands", [
-    "For Next.js, the Routes tab lists every API route and server action. For each one it shows whether the handler checks who's calling (Auth), whether it checks the record belongs to them (Owner), whether input is validated, and whether there's a rate limit.",
+    "The Routes tab lists every API route: Next.js handlers and server actions, Express, Fastify, Hono and Koa routes, NestJS controllers, and FastAPI, Flask and Django views. For each one it shows whether the handler checks who's calling (Auth), whether it checks the record belongs to them (Owner), whether input is validated, and whether there's a rate limit.",
     "For Tauri, the Commands tab lists every command the app's web page can call. For each one it shows what input it takes from the page, whether it reads or writes files, whether it checks a path is inside an allowed folder, and whether it starts programs.",
     "Both are heuristic. Read “no” as “go and look”.",
   ]],

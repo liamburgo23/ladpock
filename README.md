@@ -4,7 +4,9 @@
 
 LadPock looks for the mistakes AI-assisted code tends to make, and that a senior developer would spot in review:
 admin keys shipped to the browser, API routes that never check who's calling, Supabase tables without Row Level
-Security, paid AI endpoints anyone can hit, webhooks that trust any request, packages that don't exist, and more.
+Security, paid AI endpoints anyone can hit, webhooks that trust any request, packages that don't exist, containers
+that run as root, public storage buckets, Electron windows with Node.js switched on, and more. It covers web apps,
+APIs, desktop and mobile apps, and the infrastructure they run on.
 It runs on your machine, needs no account, and sends no code anywhere.
 
 ```text
@@ -25,11 +27,23 @@ CRITICAL (6)
 
 ## What it does
 
-- **55 built-in checks** across secrets, sign-in, authorization, API abuse and cost, injection, payments,
+- **113 built-in checks** across secrets, sign-in, authorization, API abuse and cost, injection, payments,
   crypto, config, supply chain, and AI-generated code smells. Run `ladpock checks` for the list, or see
   [docs/CHECKS.md](docs/CHECKS.md).
-- **A route matrix** for Next.js (App Router, Pages API and server actions). It shows every endpoint with its auth,
-  ownership check, validation and rate limiting, and flags the gaps.
+- **A route matrix** for Next.js (App Router, Pages API and server actions), Express, Fastify, Hono, Koa, NestJS,
+  FastAPI, Flask and Django. It shows every endpoint with its auth, ownership check, validation and rate limiting,
+  and flags the gaps: unauthenticated writes, records fetched by ID without an ownership check, auth only in
+  middleware, paid AI endpoints without a login or rate limit.
+- **Infrastructure checks** for Dockerfiles, Docker Compose, Kubernetes manifests, Terraform and GitHub Actions:
+  root containers, baked-in secrets, privileged or host-mounted containers, databases published to the internet,
+  public buckets, open firewalls, wildcard IAM policies and workflow script injection.
+- **Desktop and mobile checks** for Electron, Android, iOS, React Native/Expo and Flutter: Node.js in the page,
+  exposed IPC, missing CSP, cleartext traffic, debuggable builds, exported components, tokens in plain storage,
+  risky WebViews and certificate-check bypasses.
+- **Many languages:** JavaScript/TypeScript, Python, Go, PHP, Ruby, Java/Kotlin, C#, Rust, Dart and Swift, with each
+  language's own spelling of SQL injection, command injection, unsafe deserialisation, weak crypto and more.
+- **More than 50 provider secret formats** (cloud, AI, payment, source-control, messaging and observability tokens),
+  masked everywhere they appear.
 - **A Tauri pack and command matrix.** It checks the Content-Security-Policy, capability files (remote access,
   file-system and shell permissions), the asset protocol and the updater. It also lists every `#[tauri::command]`
   the page can call, with which ones read or write files, whether they check the path is inside an allowed folder,
@@ -251,12 +265,17 @@ If you install them yourself instead (for example with a package manager), LadPo
 
 | Stack | Depth |
 |---|---|
-| Next.js, React, Supabase, Firebase, Stripe, GitHub Actions | Framework-aware checks and route matrix |
+| Next.js, React, Supabase, Firebase, Stripe | Framework-aware checks and route matrix |
+| Express, Fastify, Hono, Koa, NestJS | Route matrix (middleware, guards, validation, rate limits) and Node server checks |
+| FastAPI, Flask, Django and Django REST Framework | Route matrix (decorators, Depends, permission classes) and settings checks |
 | Tauri (v2 and v1) | CSP, capabilities, asset protocol, updater, and the command matrix |
-| Rust | Dependency vulnerabilities (Cargo.lock), network listeners, disabled TLS checks |
-| Everything else (Python, Express, other frameworks) | Generic checks: secrets, dependencies, injection patterns, config, AI code smells |
+| Electron | Window settings, preload/IPC exposure, navigation, CSP and IPC handlers |
+| Android, iOS, React Native/Expo, Flutter | Manifest and ATS settings, storage, WebViews, certificate checks |
+| Docker, Compose, Kubernetes, Terraform, GitHub Actions | Infrastructure-as-code checks |
+| Go, PHP/Laravel, Ruby/Rails, Java/Spring, .NET, Rust | Language-specific injection, crypto, config and framework-setting checks |
+| Anything else | Generic checks: secrets, dependencies, injection patterns, config, AI code smells |
 
-Each scan says which stacks got deep checks, so you know how thorough it was. More framework packs are planned.
+Each scan says which stacks got deep checks, so you know how thorough it was.
 
 ## Honest limits
 
