@@ -17,7 +17,8 @@ LABELS = {
     "django": "Django", "node": "Node.js", "python": "Python", "docker": "Docker",
     "github-actions": "GitHub Actions", "tauri": "Tauri", "rust": "Rust", "koa": "Koa", "nestjs": "NestJS",
     "kubernetes": "Kubernetes", "terraform": "Terraform", "electron": "Electron", "react-native": "React Native",
-    "expo": "Expo", "android": "Android", "ios": "iOS", "flutter": "Flutter",
+    "expo": "Expo", "android": "Android", "ios": "iOS", "flutter": "Flutter", "go": "Go", "php": "PHP",
+    "laravel": "Laravel", "ruby": "Ruby", "rails": "Rails", "java": "Java/Kotlin", "spring": "Spring", "dotnet": ".NET",
 }
 
 # Stacks with dedicated, framework-aware checks. Everything else still gets the
@@ -110,6 +111,22 @@ def detect(index: FileIndex) -> list[str]:
             add("ios")
         elif name == "pubspec.yaml":
             add("flutter")
+        elif name == "go.mod":
+            add("go")
+        elif name == "composer.json":
+            add("php")
+            if "laravel/framework" in (index.read(rel) or ""):
+                add("laravel")
+        elif name == "Gemfile":
+            add("ruby")
+            if re.search(r"""(?m)^\s*gem\s+['"]rails['"]""", index.read(rel) or ""):
+                add("rails")
+        elif name in ("pom.xml", "build.gradle", "build.gradle.kts"):
+            add("java")
+            if "spring-boot" in (index.read(rel) or ""):
+                add("spring")
+        elif name.endswith(".csproj"):
+            add("dotnet")
         elif name.endswith((".yml", ".yaml")) and not rel.startswith(".github/") and re.search(
                 r"(?m)^apiVersion:\s*\S+[\s\S]*^kind:\s*(?:Deployment|Pod|Service|StatefulSet|DaemonSet|Ingress|Secret|"
                 r"ConfigMap|Job|CronJob)\b", index.read(rel) or ""):
@@ -132,5 +149,6 @@ def detect(index: FileIndex) -> list[str]:
 def coverage(stack: list[str]) -> tuple[list[str], list[str]]:
     """(deep-check labels, generic-only labels) for display."""
     deep = [LABELS.get(s, s) for s in stack if s in DEEP_PACKS]
-    generic = [LABELS.get(s, s) for s in stack if s not in DEEP_PACKS and s not in ("node", "python")]
+    generic = [LABELS.get(s, s) for s in stack if s not in DEEP_PACKS and s not in ("node", "python", "go", "php", "ruby",
+                                                                                         "java", "dotnet")]
     return deep, generic

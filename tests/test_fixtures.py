@@ -52,6 +52,7 @@ EXPECTED_APPS = {
     "LP-ELEC-001", "LP-ELEC-002", "LP-ELEC-003", "LP-ELEC-004", "LP-ELEC-005", "LP-ELEC-006", "LP-ELEC-007",
     "LP-ELEC-008", "LP-ELEC-009", "LP-MOB-001", "LP-MOB-002", "LP-MOB-003", "LP-MOB-004", "LP-MOB-005",
 }
+EXPECTED_POLYGLOT = {"LP-AUTHZ-006", "LP-CFG-007", "LP-CFG-008", "LP-ABUSE-005"}
 # Produced only with network access or git, covered by their own tests.
 NOT_IN_OFFLINE_FIXTURE = {"LP-SEC-004", "LP-DEP-001", "LP-SUP-005"}
 
@@ -81,7 +82,7 @@ class VulnerableFixture(unittest.TestCase):
 
     def test_catalogue_is_fully_covered(self):
         untested = (set(REGISTRY) - EXPECTED_VULN - EXPECTED_TAURI - EXPECTED_NODE - EXPECTED_PYTHON - EXPECTED_INFRA
-                    - EXPECTED_APPS - NOT_IN_OFFLINE_FIXTURE)
+                    - EXPECTED_APPS - EXPECTED_POLYGLOT - NOT_IN_OFFLINE_FIXTURE)
         self.assertEqual(sorted(untested), [], "add these checks to a vulnerable fixture")
 
     def test_secrets_are_masked_in_output(self):
@@ -106,7 +107,7 @@ class VulnerableFixture(unittest.TestCase):
 class CleanFixture(unittest.TestCase):
     def test_clean_apps_have_no_findings(self):
         for name in ("clean-next-supabase", "clean-tauri", "clean-node-api", "clean-python-web", "clean-infra",
-                     "clean-electron", "clean-mobile"):
+                     "clean-electron", "clean-mobile", "clean-polyglot"):
             with self.subTest(name), materialize(name) as tmp:
                 findings, errors = run_all(_context(Path(tmp) / name))
                 self.assertEqual(errors, [])
@@ -225,6 +226,29 @@ class AppFixtures(unittest.TestCase):
                 self.assertNotIn("android/app/src/main/AndroidManifest.xml:7", exported)  # the launcher activity
                 self.assertIn("LP-VIBE-001", found)  # Flutter badCertificateCallback => true
         self.assertEqual(sorted(EXPECTED_APPS - found), [])
+
+
+class PolyglotFixture(unittest.TestCase):
+    """Go, PHP, Rails, Spring and .NET spellings of the same mistakes."""
+
+    def test_each_language_is_covered(self):
+        with materialize("vuln-polyglot") as tmp:
+            root = Path(tmp) / "vuln-polyglot"
+            findings, errors = run_all(_context(root))
+            stack = set(detect(FileIndex(root)))
+        self.assertEqual(errors, [])
+        self.assertEqual(sorted(EXPECTED_POLYGLOT - {f.check_id for f in findings}), [])
+        self.assertTrue({"go", "php", "rails", "spring", "dotnet"} <= stack)
+
+        def files(check_id):
+            return {f.file.split("/")[0] for f in findings if f.check_id == check_id}
+
+        self.assertEqual(files("LP-INJ-003"), {"go", "php", "rails", "java", "dotnet"})  # SQL built from strings
+        self.assertEqual(files("LP-INJ-002"), {"go", "php", "rails", "dotnet"})  # shell commands built from input
+        self.assertEqual(files("LP-INJ-006"), {"php", "dotnet"})  # unserialize, BinaryFormatter
+        self.assertEqual(files("LP-AUTH-003"), {"php", "java"})  # md5 / MessageDigest for passwords
+        self.assertIn("java", files("LP-CFG-001"))  # @CrossOrigin(origins = "*")
+        self.assertIn("go", files("LP-CRYPTO-001"))  # math/rand for a reset token
 
 
 class RouteMatrix(unittest.TestCase):

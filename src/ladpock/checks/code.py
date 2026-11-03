@@ -87,7 +87,8 @@ regex_check(
     fix="Read the secret only from the environment and fail at startup if it's missing, instead of falling back to a default.",
     pattern=r"jwt\.sign\([^)]*,\s*['\"][^'\"]{1,64}['\"]|"
             r"process\.env\.\w*(?:SECRET|_KEY|TOKEN)\w*\s*(?:\|\||\?\?)\s*['\"][^'\"]+['\"]|"
-            r"os\.(?:environ\.get|getenv)\(\s*['\"]\w*(?:SECRET|_KEY|TOKEN)\w*['\"]\s*,\s*['\"][^'\"]+['\"]",
+            r"os\.(?:environ\.get|getenv)\(\s*['\"]\w*(?:SECRET|_KEY|TOKEN)\w*['\"]\s*,\s*['\"][^'\"]+['\"]|"
+            r"\bjwt\.encode\([^)]*,\s*['\"][^'\"]{1,64}['\"]",
     unless=r"(?i)publishable|anon|public",
     cwe=("CWE-798", "CWE-321"),
 )
@@ -97,7 +98,10 @@ regex_check(
     why="MD5 and SHA hashes are built to be fast, so leaked password hashes can be cracked by the billion per second.",
     fix="Use a password hashing function: argon2id, bcrypt or scrypt (for example the 'bcrypt' or '@node-rs/argon2' "
         "package, or passlib/argon2-cffi in Python). Better still, let your auth provider handle passwords.",
-    pattern=r"createHash\(\s*['\"](?:md5|sha1|sha256|sha512)['\"]|hashlib\.(?:md5|sha1|sha256|sha512)\(",
+    pattern=r"createHash\(\s*['\"](?:md5|sha1|sha256|sha512)['\"]|hashlib\.(?:md5|sha1|sha256|sha512)\(|"
+            r"\b(?:md5|sha1)\(\s*\$|\bhash\(\s*['\"](?:md5|sha1|sha256|sha512)['\"]|"
+            r"MessageDigest\.getInstance\(\s*\"(?:MD5|SHA-?1|SHA-?256|SHA-?512)\"|\b(?:MD5|SHA1|SHA256|SHA512)\.(?:Create|HashData)\(|"
+            r"Digest::(?:MD5|SHA1|SHA256)|\b(?:md5|sha1|sha256|sha512)\.Sum(?:256|512)?\(",
     near_pattern=r"(?i)passw", cwe=("CWE-916",),
 )
 
@@ -125,7 +129,8 @@ regex_check(
     "LP-CRYPTO-001", "Predictable random numbers used for a secret value", "crypto", Severity.MEDIUM,
     why="Math.random() and Python's random module are predictable. Tokens, codes and IDs made with them can be guessed.",
     fix="Use crypto.randomUUID() or crypto.getRandomValues() in JavaScript, or the secrets module in Python.",
-    pattern=r"Math\.random\(\)|\brandom\.(?:random|randint|choice|choices|randrange|getrandbits)\(",
+    pattern=r"Math\.random\(\)|\brandom\.(?:random|randint|choice|choices|randrange|getrandbits)\(|\bnew\s+Random\(|"
+            r"\brand\.(?:Intn|Int63n?|Int31n?|Uint32|Uint64|Float64)\(|\b(?:mt_rand|uniqid|lcg_value)\(|\brand\(\s*\d",
     near_pattern=r"(?i)token|secret|passw|otp|nonce|salt|session|api_?key|reset|invite|verif|\bcode\b",
     window=0, cwe=("CWE-338",),
 )
@@ -139,7 +144,14 @@ regex_check(
         "without shell=True) and validate the values first.",
     pattern=r"(?<![\w.$])eval\s*\(|\bnew\s+Function\s*\(|\bexec(?:Sync)?\s*\(\s*`[^`]*\$\{|"
             r"\bexec(?:Sync)?\s*\(\s*['\"][^'\"]*['\"]\s*\+|subprocess\.\w+\([^)]*shell\s*=\s*True|"
-            r"os\.system\s*\(\s*(?:f['\"]|[^)'\"]*\+)",
+            r"os\.system\s*\(\s*(?:f['\"]|[^)'\"]*\+)|"
+            r"\bexec\.Command(?:Context)?\(\s*(?:ctx,\s*)?\"(?:sh|bash|zsh|cmd|cmd\.exe|powershell|pwsh|/bin/sh|/bin/bash)\"\s*,"
+            r"\s*\"(?:-c|/c|/C|-Command)\"|"
+            r"\b(?:shell_exec|system|passthru|popen|proc_open|pcntl_exec|exec)\s*\([^;]*\$_(?:GET|POST|REQUEST|COOKIE)|"
+            r"`[^`]*\$_(?:GET|POST|REQUEST)|\bpreg_replace\(\s*['\"][^'\"]*/e['\"]|\bassert\s*\(\s*\$_(?:GET|POST|REQUEST)|"
+            r"\b(?:system|exec|spawn|popen|IO\.popen|Open3\.\w+)\s*\(?\s*\"[^\"]*#\{|%x\{[^}]*#\{|`[^`]*#\{|"
+            r"\bRuntime\.getRuntime\(\)\.exec\(\s*(?:\"[^\"]*\"\s*\+|[^)]*getParameter)|\bnew\s+ProcessBuilder\([^)]*getParameter|"
+            r"\bProcess\.Start\([^)]*(?:\"\s*\+|\$\")|\bnew\s+ProcessStartInfo\([^)]*(?:\"\s*\+|\$\")",
     cwe=("CWE-94", "CWE-78"),
 )
 
@@ -151,7 +163,25 @@ regex_check(
             r"(?:`(?=[^`]*\$\{)(?=[^`]*\b(?i:select|insert|update|delete|where)\b)|['\"][^'\"]*\b(?i:select|insert|update|delete|where)\b[^'\"]*['\"]\s*\+)|"
             r"\$(?:queryRawUnsafe|executeRawUnsafe)\s*\(|"
             r"(?:execute|executemany|text|raw|RawSQL|extra)\s*\(\s*f['\"][^'\"]*\b(?i:select|insert|update|delete|where)\b|"
-            r"(?:execute|text)\s*\(\s*['\"][^'\"]*\b(?i:select|insert|update|delete|where)\b[^'\"]*['\"]\s*(?:%|\.format\()",
+            r"(?:execute|text)\s*\(\s*['\"][^'\"]*\b(?i:select|insert|update|delete|where)\b[^'\"]*['\"]\s*(?:%|\.format\()|"
+            # Go database/sql
+            r"\.(?:Query|QueryRow|Exec|QueryContext|QueryRowContext|ExecContext)\(\s*(?:ctx,\s*)?(?:fmt\.Sprintf\(\s*\"[^\"]*"
+            r"\b(?i:select|insert|update|delete|where)\b|\"[^\"]*\b(?i:select|insert|update|delete|where)\b[^\"]*\"\s*\+)|"
+            # PHP
+            r"\b(?:mysqli_query|mysql_query|pg_query)\s*\([^;]*(?:\$_(?:GET|POST|REQUEST|COOKIE)|\"[^\"]*\$\w+)|"
+            r"->(?:query|exec|prepare)\(\s*\"[^\"]*\b(?i:select|insert|update|delete|where)\b[^\"]*\$\w+|"
+            r"['\"]\s*\.\s*\$_(?:GET|POST|REQUEST)\[.*\b(?i:select|insert|update|delete|where)\b|"
+            r"\b(?i:select|insert|update|delete)\b[^'\"]*['\"]\s*\.\s*\$_(?:GET|POST|REQUEST)|"
+            # Ruby on Rails
+            r"\.(?:where|find_by_sql|exec_query|order|having|joins|pluck|group|from)\(\s*\"[^\"]*#\{|"
+            r"connection\.(?:execute|select_all|select_value)\(\s*\"[^\"]*#\{|"
+            # Java / Kotlin (JDBC, JPA, Spring JdbcTemplate)
+            r"\b(?:executeQuery|executeUpdate|executeLargeUpdate|addBatch|prepareStatement|createQuery|createNativeQuery|"
+            r"queryForObject|queryForList|queryForMap)\(\s*\"[^\"]*\b(?i:select|insert|update|delete|where|from)\b[^\"]*\"\s*\+|"
+            # C# (ADO.NET, Entity Framework, Dapper)
+            r"\bnew\s+SqlCommand\(\s*(?:\$\"[^\"]*\{|\"[^\"]*\"\s*\+)|"
+            r"\b(?:FromSqlRaw|ExecuteSqlRaw|ExecuteSqlRawAsync|SqlQueryRaw)\(\s*(?:\$\"[^\"]*\{|\"[^\"]*\"\s*\+)|"
+            r"\.(?:Query|QueryAsync|Execute|ExecuteAsync|QueryFirst\w*)(?:<\w+>)?\(\s*\$\"[^\"]*\b(?i:select|insert|update|delete|where)\b",
     cwe=("CWE-89",),
 )
 
@@ -206,9 +236,14 @@ regex_check(
 
 CORS_ANY = re.compile(
     r"Access-Control-Allow-Origin['\"]?\s*[,:]\s*['\"]\*['\"]|\bcors\(\s*\)|\borigin\s*:\s*(?:['\"]\*['\"]|true\b)|"
-    r"allow_origins\s*=\s*\[\s*['\"]\*['\"]\s*\]|CORS_ALLOW_ALL_ORIGINS\s*=\s*True|CORS_ORIGIN_ALLOW_ALL\s*=\s*True"
+    r"allow_origins\s*=\s*\[\s*['\"]\*['\"]\s*\]|CORS_ALLOW_ALL_ORIGINS\s*=\s*True|CORS_ORIGIN_ALLOW_ALL\s*=\s*True|"
+    r"@CrossOrigin\(\s*(?:origins\s*=\s*)?\"\*\"|@CrossOrigin\s*(?:\(\s*\))?\s*$|allowedOrigins\(\s*\"\*\"\s*\)|"
+    r"allowedOriginPatterns\(\s*\"\*\"\s*\)|addAllowedOrigin\(\s*\"\*\"\s*\)|\.AllowAnyOrigin\(\)|SetIsOriginAllowed\(\s*\w*\s*=>\s*true|"
+    r"AllowedOrigins:\s*\[\]string\{\s*\"\*\"|AllowAllOrigins:\s*true|^\s*origins\s+['\"]\*['\"]"
 )
-CORS_CREDENTIALS = re.compile(r"(?i)credentials['\"]?\s*[:=]\s*(?:true|True|['\"]true['\"])|allow_credentials\s*=\s*True")
+CORS_CREDENTIALS = re.compile(r"(?i)credentials['\"]?\s*[:=]\s*(?:true|True|['\"]true['\"])|allow_credentials\s*=\s*True|"
+                              r"\.AllowCredentials\(\)|allowCredentials\(\s*true\s*\)|allowCredentials\s*=\s*\"true\"|"
+                              r"AllowCredentials:\s*true|credentials:\s*true")
 
 
 @check(

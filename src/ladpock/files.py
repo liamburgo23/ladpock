@@ -35,7 +35,7 @@ TEXT_EXT = CODE_EXT | CONFIG_EXT | {
 }
 TEXT_NAMES = {
     "Dockerfile", ".gitignore", ".npmrc", ".yarnrc", ".cursorrules", ".windsurfrules", "Procfile",
-    "Gemfile", "Makefile", "Pipfile", ".dockerignore", ".gitattributes",
+    "Gemfile", "Makefile", "Pipfile", ".dockerignore", ".gitattributes", ".htaccess",
 }
 LOCKFILES = {
     "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock",
