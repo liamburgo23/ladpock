@@ -31,7 +31,7 @@ TEXT_EXT = CODE_EXT | CONFIG_EXT | {
     ".ejs", ".hbs", ".handlebars", ".pug", ".jade", ".njk", ".jinja", ".jinja2", ".j2", ".twig", ".erb", ".liquid",
     ".mustache",
     # infrastructure and platform config
-    ".plist", ".gradle", ".kts", ".tfvars", ".csproj", ".config", ".env",
+    ".plist", ".gradle", ".kts", ".tfvars", ".csproj", ".config", ".env", ".tfstate",
 }
 TEXT_NAMES = {
     "Dockerfile", ".gitignore", ".npmrc", ".yarnrc", ".cursorrules", ".windsurfrules", "Procfile",
@@ -78,6 +78,8 @@ def is_ai_instruction_file(rel: str) -> bool:
 
 def is_texty(name: str) -> bool:
     if name in TEXT_NAMES or name in LOCKFILES or is_env_file(name):
+        return True
+    if name.startswith(("Dockerfile.", "Containerfile")) or name.lower().endswith(".dockerfile"):
         return True
     return os.path.splitext(name)[1].lower() in TEXT_EXT
 

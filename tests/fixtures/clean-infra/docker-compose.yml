@@ -1,0 +1,19 @@
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    cap_drop:
+      - ALL
+  db:
+    image: postgres:16.4
+    environment:
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password
+    ports:
+      - "127.0.0.1:5432:5432"
+
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt

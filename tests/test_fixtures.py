@@ -43,6 +43,11 @@ EXPECTED_PYTHON = {
     "LP-AUTH-007", "LP-AUTH-009", "LP-AUTH-010", "LP-CFG-001", "LP-CFG-003", "LP-CFG-004", "LP-INJ-003", "LP-INJ-006",
     "LP-INJ-007", "LP-INJ-008", "LP-INJ-009", "LP-INJ-012", "LP-SEC-007", "LP-VIBE-004",
 }
+EXPECTED_INFRA = {
+    "LP-DOCKER-001", "LP-DOCKER-002", "LP-DOCKER-003", "LP-DOCKER-004", "LP-INFRA-001", "LP-INFRA-002", "LP-INFRA-003",
+    "LP-INFRA-004", "LP-INFRA-005", "LP-TF-001", "LP-TF-002", "LP-TF-003", "LP-TF-004", "LP-TF-005", "LP-SUP-006",
+    "LP-SUP-007",
+}
 # Produced only with network access or git, covered by their own tests.
 NOT_IN_OFFLINE_FIXTURE = {"LP-SEC-004", "LP-DEP-001", "LP-SUP-005"}
 
@@ -71,7 +76,8 @@ class VulnerableFixture(unittest.TestCase):
         self.assertEqual(sorted(EXPECTED_VULN - self.ids), [])
 
     def test_catalogue_is_fully_covered(self):
-        untested = set(REGISTRY) - EXPECTED_VULN - EXPECTED_TAURI - EXPECTED_NODE - EXPECTED_PYTHON - NOT_IN_OFFLINE_FIXTURE
+        untested = (set(REGISTRY) - EXPECTED_VULN - EXPECTED_TAURI - EXPECTED_NODE - EXPECTED_PYTHON - EXPECTED_INFRA
+                    - NOT_IN_OFFLINE_FIXTURE)
         self.assertEqual(sorted(untested), [], "add these checks to a vulnerable fixture")
 
     def test_secrets_are_masked_in_output(self):
@@ -95,7 +101,7 @@ class VulnerableFixture(unittest.TestCase):
 
 class CleanFixture(unittest.TestCase):
     def test_clean_apps_have_no_findings(self):
-        for name in ("clean-next-supabase", "clean-tauri", "clean-node-api", "clean-python-web"):
+        for name in ("clean-next-supabase", "clean-tauri", "clean-node-api", "clean-python-web", "clean-infra"):
             with self.subTest(name), materialize(name) as tmp:
                 findings, errors = run_all(_context(Path(tmp) / name))
                 self.assertEqual(errors, [])
@@ -180,6 +186,25 @@ class ServerFixtures(unittest.TestCase):
         _, py = self.findings("clean-python-web")
         self.assertEqual((py[("django", "ANY", "/invoices/")].auth, py[("django", "ANY", "/invoices/")].owner), ("yes", "yes"))
         self.assertEqual(py[("fastapi", "POST", "/items")].validation, "yes")  # pydantic model parameter
+
+
+class InfraFixture(unittest.TestCase):
+    def test_every_infra_check_fires(self):
+        with materialize("vuln-infra") as tmp:
+            root = Path(tmp) / "vuln-infra"
+            findings, errors = run_all(_context(root))
+            stack = detect(FileIndex(root))
+        self.assertEqual(errors, [])
+        self.assertEqual(sorted(EXPECTED_INFRA - {f.check_id for f in findings}), [])
+        self.assertTrue({"docker", "kubernetes", "terraform", "github-actions"} <= set(stack))
+
+        def at(check_id):
+            return {f.location for f in findings if f.check_id == check_id}
+
+        self.assertEqual(at("LP-TF-002"), {"infra/main.tf:20"})  # SSH from anywhere; HTTPS and egress are fine
+        self.assertEqual(at("LP-INFRA-002"), {"docker-compose.yml:16", "docker-compose.yml:20"})  # not the app's port 3000
+        baked = [f.snippet for f in findings if f.check_id == "LP-DOCKER-002" and "ENV" in (f.snippet or "")]
+        self.assertTrue(baked and all("****" in s for s in baked))  # values masked in reports
 
 
 class RouteMatrix(unittest.TestCase):

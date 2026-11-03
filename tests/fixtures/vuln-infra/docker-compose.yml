@@ -1,0 +1,20 @@
+services:
+  app:
+    build: .
+    privileged: true
+    ports:
+      - "3000:3000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    cap_add:
+      - SYS_ADMIN
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+  cache:
+    image: redis:7
+    ports:
+      - 6379:6379

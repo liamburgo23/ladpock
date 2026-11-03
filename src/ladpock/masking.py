@@ -38,6 +38,11 @@ _PLACEHOLDER = re.compile(
 _ASSIGNMENT = re.compile(
     r"(?i)((?:password|passwd|pwd|secret|token|api[_-]?key|private[_-]?key)[\w-]*['\"]?\s*[:=]\s*['\"])([^'\"\s]{6,})(['\"])"
 )
+# Unquoted env-style assignments (.env, Dockerfile ENV/ARG, shell export), keyed by an UPPER_CASE secret name.
+_ENV_ASSIGNMENT = re.compile(
+    r"(?m)^(\s*(?:export\s+|ENV\s+|ARG\s+|-\s*)?[A-Z][A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|APIKEY|PRIVATE_KEY|"
+    r"ACCESS_KEY)[A-Z0-9_]*\s*=\s*)([^\s'\"$]{6,})"
+)
 LOCAL_DB_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "db", "postgres", "mysql", "redis", "mongo", "host.docker.internal"}
 
 
@@ -80,4 +85,5 @@ def redact(text: str) -> str:
         lambda m: m.group(0) if "****" in m.group(2) else m.group(1) + mask(m.group(2)) + m.group(3),
         text,
     )
+    text = _ENV_ASSIGNMENT.sub(lambda m: m.group(0) if "****" in m.group(2) else m.group(1) + mask(m.group(2)), text)
     return text

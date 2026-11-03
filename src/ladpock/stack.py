@@ -16,11 +16,13 @@ LABELS = {
     "anthropic": "Anthropic", "ai-sdk": "Vercel AI SDK", "fastapi": "FastAPI", "flask": "Flask",
     "django": "Django", "node": "Node.js", "python": "Python", "docker": "Docker",
     "github-actions": "GitHub Actions", "tauri": "Tauri", "rust": "Rust", "koa": "Koa", "nestjs": "NestJS",
+    "kubernetes": "Kubernetes", "terraform": "Terraform",
 }
 
 # Stacks with dedicated, framework-aware checks. Everything else still gets the
 # generic checks (secrets, dependencies, injection patterns, config).
-DEEP_PACKS = {"nextjs", "react", "supabase", "firebase", "stripe", "github-actions", "tauri"}
+DEEP_PACKS = {"nextjs", "react", "supabase", "firebase", "stripe", "github-actions", "tauri", "express", "fastify",
+              "hono", "koa", "nestjs", "fastapi", "flask", "django", "docker", "kubernetes", "terraform"}
 
 _NPM = {
     "next": "nextjs", "react": "react", "vite": "vite", "express": "express", "fastify": "fastify",
@@ -94,8 +96,15 @@ def detect(index: FileIndex) -> list[str]:
             add("nextjs")
         elif name in ("firestore.rules", "storage.rules", "database.rules.json", "firebase.json"):
             add("firebase")
-        elif name == "Dockerfile":
+        elif name == "Dockerfile" or name.startswith(("Dockerfile.", "Containerfile")) or (
+                name.lower().startswith(("docker-compose", "compose.")) and name.endswith((".yml", ".yaml"))):
             add("docker")
+        elif name.endswith((".tf", ".tfvars")):
+            add("terraform")
+        elif name.endswith((".yml", ".yaml")) and not rel.startswith(".github/") and re.search(
+                r"(?m)^apiVersion:\s*\S+[\s\S]*^kind:\s*(?:Deployment|Pod|Service|StatefulSet|DaemonSet|Ingress|Secret|"
+                r"ConfigMap|Job|CronJob)\b", index.read(rel) or ""):
+            add("kubernetes")
         elif name in ("tauri.conf.json", "tauri.conf.json5", "Tauri.toml"):
             add("tauri")
         elif name == "Cargo.toml":
