@@ -15,7 +15,7 @@ LABELS = {
     "clerk": "Clerk", "prisma": "Prisma", "drizzle": "Drizzle", "openai": "OpenAI",
     "anthropic": "Anthropic", "ai-sdk": "Vercel AI SDK", "fastapi": "FastAPI", "flask": "Flask",
     "django": "Django", "node": "Node.js", "python": "Python", "docker": "Docker",
-    "github-actions": "GitHub Actions", "tauri": "Tauri", "rust": "Rust",
+    "github-actions": "GitHub Actions", "tauri": "Tauri", "rust": "Rust", "koa": "Koa", "nestjs": "NestJS",
 }
 
 # Stacks with dedicated, framework-aware checks. Everything else still gets the
@@ -30,10 +30,12 @@ _NPM = {
     "next-auth": "nextauth", "@auth/core": "nextauth", "@clerk/nextjs": "clerk", "prisma": "prisma",
     "@prisma/client": "prisma", "drizzle-orm": "drizzle", "openai": "openai",
     "@anthropic-ai/sdk": "anthropic", "ai": "ai-sdk", "@tauri-apps/api": "tauri", "@tauri-apps/cli": "tauri",
+    "koa": "koa", "@koa/router": "koa", "@nestjs/core": "nestjs", "@nestjs/common": "nestjs", "@hono/node-server": "hono",
 }
 _PY = {
     "fastapi": "fastapi", "flask": "flask", "django": "django", "supabase": "supabase", "stripe": "stripe",
-    "openai": "openai", "anthropic": "anthropic", "firebase-admin": "firebase",
+    "openai": "openai", "anthropic": "anthropic", "firebase-admin": "firebase", "djangorestframework": "django",
+    "quart": "flask", "starlette": "fastapi",
 }
 _PY_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 

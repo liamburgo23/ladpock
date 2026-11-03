@@ -1,4 +1,4 @@
-"""Findings derived from the route matrix (Next.js App Router, Pages API and server actions)."""
+"""Findings derived from the route matrix: Next.js, Express, Fastify, Hono, NestJS, FastAPI, Flask and Django."""
 
 from __future__ import annotations
 
@@ -8,7 +8,7 @@ from ..models import Finding, Severity
 from ..routes import AUTH_FLOW, MUTATING, Route
 from .base import CheckInfo, ScanContext, check
 
-STACKS = ("nextjs",)
+STACKS = ("nextjs", "express", "fastify", "hono", "koa", "nestjs", "fastapi", "flask", "django")
 
 
 def _finding(ctx: ScanContext, info: CheckInfo, route: Route, **kwargs) -> Finding:

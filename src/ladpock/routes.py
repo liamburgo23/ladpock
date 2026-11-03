@@ -1,5 +1,7 @@
-"""The route matrix: every Next.js endpoint and server action, and which
-protections it has (auth, ownership check, validation, rate limiting).
+"""The route matrix: every endpoint and which protections it has (auth,
+ownership check, validation, rate limiting). Next.js handlers and server
+actions are read here; Express, Fastify, Hono, NestJS, FastAPI, Flask and
+Django come from server_routes.
 
 This is heuristic. It recognises common libraries and patterns, and says "?"
 when it can't tell rather than guessing.
@@ -79,7 +81,7 @@ class Route:
     path: str
     file: str
     line: int
-    kind: str  # route | pages-api | action
+    kind: str  # route | pages-api | action | express | fastify | hono | nest | fastapi | flask | django
     auth: str = "no"  # yes | mw (middleware only) | sig (signature) | no
     owner: str = "n/a"  # yes | rls | no | n/a
     validation: str = "n/a"  # yes | no | n/a
@@ -88,11 +90,12 @@ class Route:
     mutates: bool = False
     db: bool = False
     dynamic: bool = False
+    public: bool = False  # explicitly marked public (@Public(), AllowAny)
     notes: list[str] = field(default_factory=list)
 
     @property
     def public_path(self) -> bool:
-        return bool(PUBLIC_PATH.search(self.path))
+        return self.public or bool(PUBLIC_PATH.search(self.path))
 
     @property
     def webhook(self) -> bool:
@@ -101,7 +104,7 @@ class Route:
     def to_dict(self) -> dict:
         return {k: getattr(self, k) for k in (
             "method", "path", "file", "line", "kind", "auth", "owner", "validation", "rate_limit",
-            "paid_api", "mutates", "db", "dynamic", "notes")}
+            "paid_api", "mutates", "db", "dynamic", "public", "notes")}
 
 
 @dataclass
@@ -259,6 +262,9 @@ def analyze(index: FileIndex) -> list[Route]:
                 route = Route("ACTION", f"action {name}()", rel, line_of(code, match.start()), "action")
                 route = _assess(route, code[match.start():end], code, auth_names, Middleware())
                 routes.append(route)
+    from .server_routes import analyze_servers
+
+    routes.extend(analyze_servers(index, Route))
     routes.sort(key=lambda r: (r.kind == "action", r.path, METHODS.index(r.method) if r.method in METHODS else 99))
     return routes
 

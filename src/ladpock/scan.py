@@ -191,7 +191,7 @@ def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bo
     log(f"Running built-in checks ({', '.join(stack) or 'generic'}) ...")
     findings, check_errors = run_all(ctx, settings["categories"])
     errors.extend(check_errors)
-    routes = ctx.routes if "nextjs" in stack and settings["categories"] is None else []
+    routes = ctx.routes if settings["categories"] is None else []
     checks_run = sum(1 for info, _ in REGISTRY.values()
                      if (settings["categories"] is None or info.category in settings["categories"])
                      and (not info.stacks or set(info.stacks) & ctx.stack))

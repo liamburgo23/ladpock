@@ -108,7 +108,8 @@ regex_check(
     "LP-AUTH-005", "Cookie security flag turned off", "auth", Severity.MEDIUM,
     why="Without HttpOnly, scripts can read the cookie. Without Secure, it can travel over plain HTTP.",
     fix="Set httpOnly: true, secure: true (in production) and sameSite: 'lax' or 'strict' on session cookies.",
-    pattern=r"(?i)\b(?:httpOnly|http_only)\s*[:=]\s*false\b|\bsecure\s*[:=]\s*false\b",
+    pattern=r"(?i)\b(?:httpOnly|http_only)\s*[:=]\s*false\b|\bsecure\s*[:=]\s*false\b|"
+            r"\b(?:SESSION|CSRF)_COOKIE_(?:SECURE|HTTPONLY)\s*=\s*False\b",
     near_pattern=r"(?i)cookie", window=6, cwe=("CWE-614", "CWE-1004"),
 )
 
@@ -143,7 +144,7 @@ regex_check(
     pattern=r"(?:\.(?:query|execute|raw|exec|run|all|prepare)|\$queryRawUnsafe|\$executeRawUnsafe|sql\.unsafe|knex\.raw)\s*\(\s*"
             r"(?:`(?=[^`]*\$\{)(?=[^`]*\b(?i:select|insert|update|delete|where)\b)|['\"][^'\"]*\b(?i:select|insert|update|delete|where)\b[^'\"]*['\"]\s*\+)|"
             r"\$(?:queryRawUnsafe|executeRawUnsafe)\s*\(|"
-            r"(?:execute|executemany|text)\s*\(\s*f['\"][^'\"]*\b(?i:select|insert|update|delete|where)\b|"
+            r"(?:execute|executemany|text|raw|RawSQL|extra)\s*\(\s*f['\"][^'\"]*\b(?i:select|insert|update|delete|where)\b|"
             r"(?:execute|text)\s*\(\s*['\"][^'\"]*\b(?i:select|insert|update|delete|where)\b[^'\"]*['\"]\s*(?:%|\.format\()",
     cwe=("CWE-89",),
 )

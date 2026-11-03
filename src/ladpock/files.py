@@ -22,11 +22,16 @@ IGNORE_DIRS = {
 
 JS_EXT = frozenset({".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte", ".astro"})
 PY_EXT = frozenset({".py"})
-CODE_EXT = JS_EXT | PY_EXT | {".go", ".rb", ".php", ".java", ".kt", ".cs", ".rs", ".swift", ".dart"}
+CODE_EXT = JS_EXT | PY_EXT | {".go", ".rb", ".php", ".java", ".kt", ".cs", ".rs", ".swift", ".dart", ".scala", ".m"}
 CONFIG_EXT = frozenset({".json", ".jsonc", ".yml", ".yaml", ".toml", ".ini", ".cfg", ".conf", ".xml"})
 TEXT_EXT = CODE_EXT | CONFIG_EXT | {
     ".sql", ".md", ".mdc", ".txt", ".html", ".htm", ".css", ".scss", ".rules", ".sh", ".ps1",
     ".bat", ".lock", ".prisma", ".graphql", ".gql", ".tf", ".hcl", ".properties", ".mod", ".sum",
+    # server templates
+    ".ejs", ".hbs", ".handlebars", ".pug", ".jade", ".njk", ".jinja", ".jinja2", ".j2", ".twig", ".erb", ".liquid",
+    ".mustache",
+    # infrastructure and platform config
+    ".plist", ".gradle", ".kts", ".tfvars", ".csproj", ".config", ".env",
 }
 TEXT_NAMES = {
     "Dockerfile", ".gitignore", ".npmrc", ".yarnrc", ".cursorrules", ".windsurfrules", "Procfile",

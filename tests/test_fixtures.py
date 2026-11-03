@@ -32,6 +32,17 @@ EXPECTED_TAURI = {
     "LP-TAURI-001", "LP-TAURI-002", "LP-TAURI-003", "LP-TAURI-004", "LP-TAURI-005", "LP-TAURI-006",
     "LP-TAURI-007", "LP-TAURI-008", "LP-TAURI-009", "LP-TAURI-010", "LP-RUST-001", "LP-VIBE-001",
 }
+EXPECTED_NODE = {
+    "LP-AUTHZ-001", "LP-AUTHZ-002", "LP-AUTHZ-003", "LP-AUTHZ-004", "LP-ABUSE-003", "LP-ABUSE-004", "LP-ABUSE-010",
+    "LP-API-001", "LP-API-002", "LP-AUTH-006", "LP-AUTH-007", "LP-AUTH-008", "LP-AUTH-009", "LP-AUTH-010", "LP-AUTH-011",
+    "LP-CFG-005", "LP-CFG-006", "LP-CRYPTO-002", "LP-INJ-006", "LP-INJ-007", "LP-INJ-009", "LP-INJ-010", "LP-INJ-011",
+    "LP-SEC-007",
+}
+EXPECTED_PYTHON = {
+    "LP-AUTHZ-001", "LP-AUTHZ-002", "LP-AUTHZ-004", "LP-AUTHZ-005", "LP-ABUSE-010", "LP-AUTH-005", "LP-AUTH-006",
+    "LP-AUTH-007", "LP-AUTH-009", "LP-AUTH-010", "LP-CFG-001", "LP-CFG-003", "LP-CFG-004", "LP-INJ-003", "LP-INJ-006",
+    "LP-INJ-007", "LP-INJ-008", "LP-INJ-009", "LP-INJ-012", "LP-SEC-007", "LP-VIBE-004",
+}
 # Produced only with network access or git, covered by their own tests.
 NOT_IN_OFFLINE_FIXTURE = {"LP-SEC-004", "LP-DEP-001", "LP-SUP-005"}
 
@@ -60,7 +71,7 @@ class VulnerableFixture(unittest.TestCase):
         self.assertEqual(sorted(EXPECTED_VULN - self.ids), [])
 
     def test_catalogue_is_fully_covered(self):
-        untested = set(REGISTRY) - EXPECTED_VULN - EXPECTED_TAURI - NOT_IN_OFFLINE_FIXTURE
+        untested = set(REGISTRY) - EXPECTED_VULN - EXPECTED_TAURI - EXPECTED_NODE - EXPECTED_PYTHON - NOT_IN_OFFLINE_FIXTURE
         self.assertEqual(sorted(untested), [], "add these checks to a vulnerable fixture")
 
     def test_secrets_are_masked_in_output(self):
@@ -84,7 +95,7 @@ class VulnerableFixture(unittest.TestCase):
 
 class CleanFixture(unittest.TestCase):
     def test_clean_apps_have_no_findings(self):
-        for name in ("clean-next-supabase", "clean-tauri"):
+        for name in ("clean-next-supabase", "clean-tauri", "clean-node-api", "clean-python-web"):
             with self.subTest(name), materialize(name) as tmp:
                 findings, errors = run_all(_context(Path(tmp) / name))
                 self.assertEqual(errors, [])
@@ -123,6 +134,52 @@ class TauriFixture(unittest.TestCase):
         self.assertEqual(vuln["run_tool"].inputs, ["tool", "args"])  # State<'_, ..> is injected, not page input
         self.assertEqual((clean["save_note"].file_access, clean["save_note"].path_check), ("write", "dir"))
         self.assertEqual(clean["word_count"].file_access, "none")
+
+
+class ServerFixtures(unittest.TestCase):
+    """Express, Fastify, NestJS, FastAPI, Flask and Django: every check fires, and routes are read correctly."""
+
+    def findings(self, name):
+        with materialize(name) as tmp:
+            root = Path(tmp) / name
+            findings, errors = run_all(_context(root))
+            routes = {(r.kind, r.method, r.path): r for r in analyze(FileIndex(root))}
+        self.assertEqual(errors, [])
+        return findings, routes
+
+    def test_node_server(self):
+        findings, routes = self.findings("vuln-node-api")
+        self.assertEqual(sorted(EXPECTED_NODE - {f.check_id for f in findings}), [])
+        self.assertEqual(routes[("express", "POST", "/api/users")].auth, "no")
+        self.assertEqual(routes[("express", "GET", "/:id")].auth, "mw")  # router.use(checkJwt)
+        self.assertEqual((routes[("express", "DELETE", "/api/posts/:id")].auth,
+                          routes[("express", "DELETE", "/api/posts/:id")].owner), ("yes", "no"))
+        self.assertTrue(routes[("express", "POST", "/api/ai/summarise")].paid_api)
+        self.assertFalse(routes[("express", "POST", "/api/ai/summarise")].db)  # openai...create() isn't a database write
+        self.assertEqual(routes[("nest", "POST", "/users")].validation, "no")
+        self.assertEqual(routes[("nest", "DELETE", "/users/:id")].auth, "yes")
+
+    def test_python_web(self):
+        findings, routes = self.findings("vuln-python-web")
+        self.assertEqual(sorted(EXPECTED_PYTHON - {f.check_id for f in findings}), [])
+        self.assertEqual(routes[("flask", "POST", "/api/notes")].auth, "no")
+        self.assertEqual(routes[("flask", "DELETE", "/api/notes/<int:note_id>")].owner, "no")
+        self.assertTrue(routes[("flask", "POST", "/api/ask")].paid_api)
+        self.assertFalse(routes[("flask", "GET", "/hello")].paid_api)  # same module, but this route doesn't call OpenAI
+        self.assertEqual(routes[("fastapi", "POST", "/items")].validation, "no")
+        self.assertEqual(routes[("fastapi", "GET", "/users/{user_id}")].auth, "yes")
+        self.assertEqual(routes[("django", "ANY", "/invoices/")].auth, "no")  # ModelViewSet without permission_classes
+        secrets = [f for f in findings if f.check_id == "LP-SEC-007"]
+        self.assertTrue(all("q8w7e6r5" not in (f.snippet or "") for f in secrets))  # masked
+
+    def test_clean_server_routes(self):
+        _, node = self.findings("clean-node-api")
+        self.assertEqual(node[("nest", "POST", "/notes")].validation, "yes")  # typed DTO + global ValidationPipe
+        self.assertEqual(node[("nest", "DELETE", "/notes/:id")].auth, "yes")  # class-level guard above @Controller
+        self.assertEqual(node[("express", "POST", "/api/login")].rate_limit, "yes")
+        _, py = self.findings("clean-python-web")
+        self.assertEqual((py[("django", "ANY", "/invoices/")].auth, py[("django", "ANY", "/invoices/")].owner), ("yes", "yes"))
+        self.assertEqual(py[("fastapi", "POST", "/items")].validation, "yes")  # pydantic model parameter
 
 
 class RouteMatrix(unittest.TestCase):
