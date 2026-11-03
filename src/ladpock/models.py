@@ -95,3 +95,13 @@ class Component:
     name: str
     version: str | None
     source: str  # lockfile path relative to the project root
+
+
+def finding_from_dict(d: dict) -> Finding:
+    """Rebuild a Finding saved with Finding.to_dict()."""
+    return Finding(
+        check_id=d["check_id"], title=d["title"], severity=Severity.parse(d["severity"]), category=d["category"],
+        message=d.get("message", ""), fix=d.get("fix", ""), file=d.get("file"), line=d.get("line"),
+        snippet=d.get("snippet"), confidence=d.get("confidence", "medium"), source=d.get("source", "ladpock"),
+        cwe=tuple(d.get("cwe") or ()), extra=d.get("extra") or {},
+    )

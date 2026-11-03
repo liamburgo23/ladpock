@@ -71,10 +71,30 @@ pip install .
 ladpock ui
 ```
 
-This opens LadPock in your browser. You can add projects by picking their folders and press **Run full check** to
-run everything LadPock can do on that project: the Full scan, then the local AI review if you have a model. Or
-press **Check all projects** to do that for every project. You can also run a single Quick, Standard or Full scan;
-the page explains exactly what each one checks and how many checks apply to your project.
+This opens LadPock in your browser. Add projects by picking their folders. Each project has one scan panel: pick a
+preset or set each option yourself, then press **Scan** at the bottom.
+
+| Option | Cost | Where it runs |
+| --- | --- | --- |
+| Depth: Quick, Standard or Full | free | this computer |
+| Free online vulnerability data (OSV.dev, CISA KEV, EPSS, npm/PyPI). Turn it off for an offline scan | free | sends package names and versions |
+| Installed scanners (Gitleaks, OSV-Scanner, Opengrep) | free | this computer |
+| Search git history for deleted secrets | free | this computer |
+| Local AI review (Ollama) | free | this computer |
+| Paid online AI review (Claude, your own API key and budget) | paid | sends code, with secrets masked |
+| Paid online scanners (Snyk, Socket ...) | paid | not available yet |
+
+The presets are **Everything free**, **Offline**, **Quick** and **Deepest (paid)**. Before you press Scan, the panel
+tells you what the scan will do, what leaves your computer, and what it costs. A greyed-out option says why it
+can't run yet, for example a scanner that isn't installed. **Check all projects** on the home page runs a full
+check of every project, one after another.
+
+**Click any grade** to see why it isn't A+:
+- where every point went, category by category
+- whether an open critical or high finding is capping the overall score
+- the grade you'd reach after each round of fixes, with a fix prompt for each round
+- what would make the assessment itself more complete (missing scanners, offline data, no lockfile, unconfirmed
+  manual checks)
 
 While anything runs, the top bar shows what's running and how far along it is (click it for details and a Stop
 button). The project page shows a progress banner with the current step. When a task finishes, a message tells you
@@ -133,7 +153,40 @@ How it works:
   `ladpock ai unschedule` removes it.
 
 On an RTX 3090 with `qwen3.6:35b`, a review takes about 1.5 seconds per part once the model is loaded. A mid-sized
-app takes a few minutes. The dashboard has the same controls under **Local AI review**.
+app takes a few minutes. The dashboard has the same controls under **AI settings**.
+
+### Paid online AI review (optional, your own API key)
+
+Claude can review your code too. It's a stronger reviewer than most models that fit on a home computer, and it
+also double-checks the local model's leads. It's off until you set it up, and every part of it is your choice:
+
+```bash
+python -m pip install anthropic
+```
+
+```bash
+ladpock ai online key
+```
+
+```bash
+ladpock ai online set --enable --budget 5
+```
+
+```bash
+ladpock ai online review path/to/project
+```
+
+These install Anthropic's SDK (optional, so LadPock itself keeps zero dependencies), save your API key in Windows
+Credential Manager (or set `ANTHROPIC_API_KEY`), allow sending code with a monthly budget, and run a review after
+showing the estimated cost. In the dashboard, the same settings are under **AI settings**. Then switch on **Paid
+online AI review** in the scan panel.
+
+- **What's sent:** the same parts of your code the local review reads, with secrets masked first. Nothing for a
+  project marked "never send this project online".
+- **What it costs:** Anthropic bills your own account. LadPock records an estimate of every call and stops before a
+  run would go over your monthly budget. Unchanged code isn't sent again.
+- **What you get:** leads, like the local review. Quoted code must exist in your project, and leads never change
+  the grade.
 
 ### Command line
 
@@ -217,18 +270,20 @@ libraries and patterns, and says so when it isn't sure. A good grade means "no o
 No telemetry. The local AI review only talks to a model server on this computer (LadPock refuses any address that
 isn't 127.0.0.1 or localhost). What leaves your machine:
 
-- package names and versions, sent to OSV.dev and the npm/PyPI registries
+- package names and versions, sent to OSV.dev and the npm/PyPI registries (turn off "free online vulnerability
+  data" to send nothing)
 - CVE IDs, sent to FIRST's EPSS API
 - a download of CISA's public catalog
+- only if you set up the paid online AI review and switch it on for a scan: parts of your code with secrets masked,
+  sent to Anthropic
 
-Your code never leaves your machine. Results live in a local SQLite database: `%LOCALAPPDATA%\LadPock` on Windows,
+Otherwise your code never leaves your machine. Results live in a local SQLite database: `%LOCALAPPDATA%\LadPock` on Windows,
 `~/Library/Application Support/LadPock` on macOS, `~/.local/share/ladpock` on Linux. Set `LADPOCK_HOME` to change
 it. Secrets are masked before anything is stored.
 
 ## Roadmap
 
-- External AI review with your own API key (budget cap, a "never send" switch per project), for a second
-  opinion on serious findings and local leads
+- Paid online scanners with your own account (for example Snyk or Socket)
 - More framework packs: Express, FastAPI, SvelteKit, Remix
 - Safe live probes against your own running app (headers, CORS, rate limits)
 

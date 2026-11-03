@@ -122,10 +122,45 @@ hashing, and enforces the exact size and hash. It extracts only the named member
 ignored), and atomically replaces `<data dir>/bin/<tool>`. `scanners.base.which` already prefers that folder.
 To update a pin, change pins.json in a reviewed commit after the release has aged two weeks.
 
+## Scan options, grade explanations and the paid online AI review (0.7.0)
+
+**One pipeline, every option a toggle.** `POST /api/projects/{id}/run` takes `{profile, online, scanners, history,
+local_ai, online_ai}`. `run_options` validates them and refuses an online AI review on an offline scan. `run_project`
+runs the scan, then the local review, then the online review, each as its own job step. `/scan`, `/full-check` and
+check-all are thin mappings onto the same path. Each scan's summary records the options it ran with, so the grade
+page can tell "scanners weren't installed" apart from "you turned them off".
+
+**Why this grade.** `scoring.explain` returns:
+- each category's deductions (points per finding, with the low-confidence halving) and whether the severity floor
+  applied
+- whether a critical or high finding is capping the overall score, and by how much
+- a fix plan: the score and grade after fixing each severity level in turn, worst first
+
+`assessment_payload` adds the gaps in the assessment itself: profile, offline data, missing or disabled scanners,
+generic-only stacks, no lockfile, no AI review, and unconfirmed manual checks. The page links every grade to it
+(`#/project/{id}/grade[/{category}]`), and each fix-plan step copies a fix prompt for exactly those findings.
+
+**Paid online AI (`ai/online.py`).**
+- **SDK and model:** the official `anthropic` SDK, an optional extra so the core stays dependency-free, with
+  `claude-opus-5-5`.
+- **Request:** streams each request and asks for structured JSON output. `strict_schema` closes objects and drops the
+  array limits that structured outputs don't take. `fallbacks: "default"` under `server-side-fallback-2026-07-01`
+  lets a declined request be retried on Anthropic's recommended model.
+- **Responses:** a refusal is recorded and that part isn't re-sent until its code changes. `max_tokens` and other
+  errors are reported. A bad key, an empty account or a connection failure stops the run.
+- **Reuse of the local review:**
+  - Units, prompts and grounding are shared with the local review.
+  - Online reviews are cached in `ai_units` as `online:<unit key>`, so `ai_prune` keeps them while the unit exists.
+  - Local leads get an `online_verdict` from the same check prompt.
+- **Costs:** every call's usage is priced and stored in `online_usage`. Before each call, the run estimates its cost
+  and stops if the month's spend plus the estimate would pass the budget.
+- **Key (`ai/keys.py`):** stored in Windows Credential Manager through ctypes. Elsewhere, or if you prefer, the SDK's
+  own resolution is used (`ANTHROPIC_API_KEY` or an `ant auth login` profile).
+
 ## Next milestones
 
-1. **External AI review (optional, your own key).** Separate toggle, budget cap, and a per-project "never send"
-   switch. Secrets are redacted before sending. Used to escalate local leads and serious findings.
+1. **Paid online scanners.** Optional integrations with commercial scanners using your own account, behind the same
+   kind of toggle, consent and "never send" rules as the online AI review.
 2. **More packs.** Express/Fastify, FastAPI/Django, SvelteKit, Remix, Electron. Each one adds a route parser, rules and fixtures.
 3. **Live probes.** Localhost by default, ownership-verified otherwise. Headers, CORS, exposed paths, a small rate-limit burst.
 4. **Notifications.** Optional desktop notification when a long task or the nightly review finishes.

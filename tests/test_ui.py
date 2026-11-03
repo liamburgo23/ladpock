@@ -197,6 +197,49 @@ class DashboardServer(unittest.TestCase):
                 self.assertIn("Wait for", second[1]["error"])
             self.wait_for(first[1]["job"])
 
+    def test_scan_panel_options_and_grade_explanation(self):
+        with materialize("vuln-next-supabase") as tmp:
+            pid = self.api("POST", "/api/projects", {"path": str(Path(tmp) / "vuln-next-supabase")})[1]["id"]
+            refused = self.api("POST", f"/api/projects/{pid}/run", {"online": False, "online_ai": True})
+            self.assertEqual(refused[0], 400)  # the online AI can't run offline, so say so before starting
+            self.assertEqual(self.api("POST", f"/api/projects/{pid}/run", {"profile": "huge"})[0], 400)
+
+            status, started = self.api("POST", f"/api/projects/{pid}/run",
+                                       {"profile": "standard", "online": False, "scanners": False})
+            self.assertEqual(status, 202)
+            job = self.wait_for(started["job"])
+            self.assertEqual(job["status"], "done", job.get("error"))
+            self.assertEqual(job["title"], "Standard scan of vuln-next-supabase")
+            self.assertNotIn("Local AI review", job["steps"])
+
+            _, project = self.api("GET", f"/api/projects/{pid}")
+            used = project["scan"]["summary"]["options"]
+            self.assertEqual((used["offline"], used["scanners"]), (True, False))
+            assessment = project["assessment"]
+            self.assertEqual(assessment["grade"], project["scan"]["grade"])
+            self.assertEqual(assessment["plan"][0]["severity"], "critical")  # the path to A+ starts with the worst
+            scores = [step["score"] for step in assessment["plan"]]
+            self.assertEqual(scores, sorted(scores))
+            self.assertEqual(assessment["plan"][-1]["grade"], "A+")  # fixing everything reaches the top
+            self.assertTrue(all(d["points"] > 0 for c in assessment["categories"] for d in c["deductions"]))
+            gap_ids = {g["id"] for g in assessment["gaps"]}
+            self.assertTrue({"profile", "offline", "scanners-off", "ai"} <= gap_ids)
+
+            _, plan = self.api("GET", f"/api/projects/{pid}/online/plan")
+            self.assertGreater(plan["units"], 0)
+            self.assertFalse(plan["ready"])  # nothing is sent until it's set up
+            self.assertEqual(self.api("POST", f"/api/projects/{pid}/online/never", {"never": True})[0], 200)
+            self.assertTrue(self.api("GET", f"/api/projects/{pid}")[1]["ai"]["never_online"])
+
+    def test_online_ai_settings_are_validated(self):
+        self.assertEqual(self.api("POST", "/api/online/settings", {"budget": -1})[0], 400)
+        self.assertEqual(self.api("POST", "/api/online/settings", {"effort": "max"})[0], 400)
+        self.assertEqual(self.api("POST", "/api/online/key", {"key": "not-a-key"})[0], 400)
+        status, info = self.api("POST", "/api/online/settings", {"budget": 12.5, "effort": "low"})
+        self.assertEqual(status, 200)
+        self.assertEqual((info["budget"], info["effort"]), (12.5, "low"))
+        self.assertNotIn("sk-ant", json.dumps(info))
+
     def test_browse_lists_folders_only(self):
         with materialize("clean-next-supabase") as tmp:
             status, listing = self.api("GET", f"/api/browse?path={tmp}")

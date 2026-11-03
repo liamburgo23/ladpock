@@ -74,3 +74,48 @@ def score(findings: list[Finding], categories: set[str] | None = None) -> Scorec
     elif worst == Severity.HIGH:
         overall = min(overall, 79)
     return Scorecard(overall, grade(overall), cats, _counts(findings))
+
+
+# explaining a grade
+
+CAPS = {Severity.CRITICAL: 59, Severity.HIGH: 79}
+SEVERITY_ORDER = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW]
+
+
+def explain(findings: list[Finding], categories: set[str] | None = None) -> dict:
+    """Why a project got its grade, and the grade it would reach after each round of fixes."""
+    card = score(findings, categories)
+    average = round(sum(c.score for c in card.categories) / len(card.categories)) if card.categories else 100
+    capping = max((f.severity for f in findings if f.confidence != "low"), default=Severity.INFO)
+    cap = None
+    if capping in CAPS and average > CAPS[capping]:
+        cap = {
+            "severity": capping.label,
+            "limit": CAPS[capping],
+            "refs": [f.fingerprint for f in findings if f.severity == capping and f.confidence != "low"],
+        }
+
+    cats = []
+    for cat in card.categories:
+        in_cat = [f for f in findings if f.category == cat.key]
+        raw = round(100 - sum(weight(f) for f in in_cat))
+        deductions = sorted(
+            ({"ref": f.fingerprint, "check_id": f.check_id, "title": f.title, "severity": f.severity.label,
+              "confidence": f.confidence, "points": weight(f), "file": f.file, "line": f.line} for f in in_cat),
+            key=lambda d: (-d["points"], d["title"]))
+        cats.append({"key": cat.key, "name": cat.name, "score": cat.score, "grade": cat.grade, "raw": raw,
+                     "floored": cat.score > max(raw, 0), "deductions": deductions})
+
+    # The path to A+: fix the worst severity first, since that's what lifts the caps.
+    plan, remaining = [], list(findings)
+    for level in SEVERITY_ORDER:
+        fixing = [f for f in remaining if f.severity == level]
+        if not fixing:
+            continue
+        remaining = [f for f in remaining if f.severity != level]
+        after = score(remaining, categories)
+        plan.append({"severity": level.label, "refs": [f.fingerprint for f in fixing], "count": len(fixing),
+                     "score": after.overall, "grade": after.grade})
+
+    return {"score": card.overall, "grade": card.grade, "average": average, "cap": cap, "categories": cats,
+            "plan": plan, "perfect": not findings}

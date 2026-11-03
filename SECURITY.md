@@ -18,8 +18,10 @@ follows; a change that breaks one is a security bug.
 3. **Don't follow symlinks.** A repo can't point LadPock at files outside itself.
 4. **Mask secrets everywhere.** Snippets go through `masking.redact` before they're stored, printed or exported.
    The local database never holds a usable credential.
-5. **Send as little as possible over the network.** Only package names and versions (to OSV.dev and the npm/PyPI
-   registries) and CVE IDs (to FIRST's EPSS API) leave your machine. Never source code. There's no telemetry.
+5. **Send as little as possible over the network.** By default only package names and versions (to OSV.dev and
+   the npm/PyPI registries) and CVE IDs (to FIRST's EPSS API) leave your machine, and an offline scan sends nothing.
+   Source code is sent only to the paid online AI review, only after you set it up and switch it on (see 11).
+   There's no telemetry.
 6. **HTTPS only.** The feed client refuses plain HTTP and caps response sizes.
 7. **No third-party runtime dependencies.** LadPock uses only the Python standard library.
 8. **The dashboard is reachable only by you.** `ladpock ui` binds to 127.0.0.1. Every API call needs a random
@@ -50,6 +52,21 @@ follows; a change that breaks one is a security bug.
    - Pins come from releases at least two weeks old, and change only in a reviewed commit. Moved tags and replaced
      release files are exactly what this defends against.
    - Copies you installed yourself are used as they are and never modified.
+
+11. **The paid online AI review is opt-in at every step.** Nothing is sent unless you:
+   - install the optional `anthropic` SDK
+   - allow it in AI settings
+   - provide an API key
+   - switch it on for a scan, after seeing what will be sent and what it should cost
+
+   Projects marked "never send online" are refused before anything else happens. Code goes through the same secret
+   redaction as the local review. Leads must quote code that exists, never affect the grade and can't suppress a
+   finding.
+
+   The API key is stored in Windows Credential Manager, or taken from `ANTHROPIC_API_KEY`. It's never written to
+   LadPock's database or settings, never logged, and never returned by the dashboard API (only `sk-ant-…` and its
+   last four characters are shown). Spending is recorded per call, and a run stops before it would exceed your
+   monthly budget.
 
 ## Limits
 

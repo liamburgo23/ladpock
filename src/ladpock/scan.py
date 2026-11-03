@@ -271,6 +271,9 @@ def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bo
         "feeds": [vars(f) for f in feeds],
         "scanners": [{"name": s.name, "available": s.available, "ran": s.ran, "error": s.error} for s in scanners],
         "errors": errors[:20],
+        "options": {"offline": offline, "scanners": bool(external and settings["scanners"]),
+                    "history": bool(external and settings["scanners"]
+                                    and (history if history is not None else settings["history"]))},
     }
     db.save_scan(project_id, started, profile, card.overall, card.grade, stack, findings, summary)
     return ScanResult(

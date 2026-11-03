@@ -29,18 +29,21 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, urlsplit
 
-from .. import __version__, advisories, report, tauri
+from .. import __version__, advisories, report, scoring, tauri
+from ..ai import keys as ai_keys
+from ..ai import online as ai_online
 from ..ai import review as ai_review
 from ..ai import settings as ai_settings
 from ..ai import system as ai_system
 from ..ai.client import LocalModelError
 from ..scanners import install as scanner_install
+from ..scanners.base import which
 from ..checks import REGISTRY
 from ..db import DB
 from ..feeds import epss, kev
 from ..files import FileIndex
 from ..human import items_for
-from ..models import CATEGORIES
+from ..models import CATEGORIES, finding_from_dict
 from ..routes import analyze, gaps
 from ..scan import PROFILES, SCAN_STEPS, profile_summary, refresh_all_projects, run_scan
 from ..stack import coverage
@@ -162,13 +165,11 @@ class App:
         threading.Thread(target=run, name=f"ladpock-{kind}-{job.id[:8]}", daemon=True).start()
         return job
 
-    def start_scan(self, project_id: int, name: str, path: str, options: dict) -> Job:
-        def work(db: DB, job: Job) -> dict:
-            result = run_scan(path, db, log=job.log.append, step=job.enter, **options)
-            return _scan_result(result)
-
-        profile = options.get("profile", "standard")
-        return self.start_job("scan", project_id, f"{profile.capitalize()} scan of {name}", list(SCAN_STEPS), work)
+    def start_run(self, project_id: int, name: str, options: dict) -> Job:
+        """Scan one project with the chosen options (see run_options)."""
+        kind = "full" if options["local_ai"] else "scan"
+        return self.start_job(kind, project_id, f"{run_title(options)} of {name}", run_steps(options),
+                              lambda db, job: run_project(db, job, project_id, options))
 
     def running_job(self, project_id: int, kind: str | None = None) -> Job | None:
         with self.jobs_lock:
@@ -186,29 +187,76 @@ def _scan_result(result) -> dict:
             "findings": len(result.findings)}
 
 
-def full_check(db: DB, job: Job, project_id: int, ai: bool, prefix: str = "", offline: bool = False) -> dict:
-    """Every check LadPock has on this computer: a full scan, then the local AI review if a model is available."""
+def run_options(body: dict, **defaults) -> dict:
+    """The scan panel's choices. Each one is a separate toggle so you decide what runs and what leaves your computer."""
+    merged = {"profile": "standard", "online": True, "scanners": True, "history": None, "local_ai": False,
+              "online_ai": False, **defaults}
+    profile = body.get("profile", merged["profile"])
+    if profile not in PROFILES:
+        raise ApiError(400, "Unknown profile")
+    options = {"profile": profile}
+    for key in ("online", "scanners", "local_ai", "online_ai"):
+        options[key] = _bool(body, key, merged[key])
+    history = body.get("history", merged["history"])
+    options["history"] = PROFILES[profile]["history"] if history is None else _bool(body, "history", history)
+    if options["online_ai"] and not options["online"]:
+        raise ApiError(400, "The paid online AI review needs the internet. Turn on online data, or turn off the "
+                            "online AI review.")
+    return options
+
+
+def run_steps(options: dict) -> list[str]:
+    return (list(SCAN_STEPS) + (["Local AI review"] if options["local_ai"] else [])
+            + (["Online AI review"] if options["online_ai"] else []))
+
+
+def run_title(options: dict) -> str:
+    extras = [name for key, name in (("local_ai", "local AI"), ("online_ai", "online AI")) if options[key]]
+    return f"{options['profile'].capitalize()} scan" + (f" + {' + '.join(extras)}" if extras else "")
+
+
+def run_project(db: DB, job: Job, project_id: int, options: dict, prefix: str = "") -> dict:
+    """One project, with whatever the scan panel turned on: the scan, then the local and online AI reviews."""
     row = db.get_project_by_id(project_id)
     label = (lambda name: f"{prefix}{name}") if prefix else (lambda name: name)
-    result = run_scan(row["path"], db, profile="full", offline=offline, log=job.log.append,
+    result = run_scan(row["path"], db, profile=options["profile"], offline=not options["online"],
+                      external=options["scanners"], history=options["history"], log=job.log.append,
                       step=lambda name: job.enter(label(name)))
-    out = {"project_id": project_id, "name": row["name"], **_scan_result(result), "ai": "skipped"}
-    if not ai or job.stop.is_set():
-        return out
-    job.enter(label("Local AI review"))
-    try:
-        client = ai_settings.make_client(db)
-    except LocalModelError as exc:
-        job.log.append(f"Local AI review skipped: {exc}")
-        out["ai"] = "unavailable"
-        return out
+    out = {"project_id": project_id, "name": row["name"], **_scan_result(result)}
 
     def progress(done: int, total: int) -> None:
         job.fraction = done / total if total else 1.0
 
-    summary = ai_review.run_review(db, project_id, client, should_stop=job.stop.is_set, log=job.log.append,
-                                   progress=progress)
-    out.update(ai=summary.status, leads=summary.leads)
+    if options["local_ai"]:
+        out["ai"] = "skipped"
+        if not job.stop.is_set():
+            job.enter(label("Local AI review"))
+            try:
+                client = ai_settings.make_client(db)
+                summary = ai_review.run_review(db, project_id, client, should_stop=job.stop.is_set,
+                                               log=job.log.append, progress=progress)
+                out.update(ai=summary.status, leads=summary.leads)
+            except LocalModelError as exc:
+                job.log.append(f"Local AI review skipped: {exc}")
+                out["ai"] = "unavailable"
+    if options["online_ai"]:
+        out["online_ai"] = "skipped"
+        if not job.stop.is_set():
+            job.enter(label("Online AI review"))
+            if not ai_online.enabled(db):
+                job.log.append("Online AI review skipped: it isn't set up yet (AI settings, Paid online AI)")
+                out["online_ai"] = "not set up"
+                return out
+            try:
+                client = ai_online.OnlineClient(effort=ai_online.effort(db))
+                summary = ai_online.run_online_review(db, project_id, client, should_stop=job.stop.is_set,
+                                                      log=job.log.append, progress=progress)
+                out.update(online_ai=summary.status, online_leads=summary.leads, online_cost=round(summary.cost, 2))
+                if summary.message:
+                    job.log.append(summary.message)
+            except ai_online.OnlineAIError as exc:
+                job.log.append(f"Online AI review skipped: {exc}")
+                out["online_ai"] = "unavailable"
     return out
 
 
@@ -278,6 +326,7 @@ def project_payload(app: App, db: DB, project_id: int) -> dict:
     findings = db.scan_findings(scan["id"]) if scan else []
     summary = json.loads(scan["summary"] or "{}") if scan else {}
     checked = db.human_checks(project_id)
+    human = [{"id": i, "text": t, "checked_at": checked.get(i)} for i, t in items_for(set(stack))]
     job = app.running_job(project_id)
     return {
         "project": _project_summary(db, row, {}),
@@ -288,21 +337,83 @@ def project_payload(app: App, db: DB, project_id: int) -> dict:
         "findings": findings,
         "history": [{"started_at": s["started_at"], "grade": s["grade"], "score": s["score"], "profile": s["profile"]}
                     for s in db.scan_history(project_id, 20)],
-        "human": [{"id": i, "text": t, "checked_at": checked.get(i)} for i, t in items_for(set(stack))],
+        "human": human,
         "job": job.to_dict() if job else None,
         "profiles": profile_summary(stack),
         "categories": CATEGORIES,
         "ai": ai_payload(app, db, project_id, row),
+        "assessment": assessment_payload(db, project_id, scan, findings, summary, human),
     }
+
+
+def assessment_payload(db: DB, project_id: int, scan, findings: list[dict], summary: dict,
+                       human: list[dict]) -> dict | None:
+    """Why the project got its grade, the path to A+, and what would make the assessment itself more complete."""
+    if not scan:
+        return None
+    categories = {c["key"] for c in summary.get("categories", [])} or None
+    explanation = scoring.explain([finding_from_dict(f) for f in findings], categories)
+
+    gaps_ = []
+    if scan["profile"] != "full":
+        gaps_.append({"id": "profile", "title": f"The last scan was {scan['profile'].capitalize()}, not Full",
+                      "detail": "A full check also searches git history for deleted secrets"
+                      + (" and runs every code check" if scan["profile"] == "quick" else "") + ".",
+                      "fix": "Run a full check", "href": f"#/project/{project_id}"})
+    failed = [f["name"] for f in summary.get("feeds", []) if not f.get("ok")]
+    if failed:
+        gaps_.append({"id": "offline", "title": "Vulnerability data wasn't refreshed",
+                      "detail": f"{', '.join(failed)} couldn't be reached (or the scan was offline), so newly published "
+                                "vulnerabilities in your dependencies may be missing.",
+                      "fix": "Scan again with online vulnerability data on", "href": f"#/project/{project_id}"})
+    missing = [name for name, info in scanner_install.load_pins().items() if not which(info["binary"])]
+    if missing:
+        gaps_.append({"id": "scanners", "title": f"Not installed: {', '.join(missing)}",
+                      "detail": "These free scanners find things LadPock's own checks don't: more secret types, "
+                                "secrets in git history, more lockfile formats, and data-flow bugs.",
+                      "fix": "Install from the Scanners page", "href": "#/scanners"})
+    generic = (summary.get("coverage") or {}).get("generic") or []
+    if generic:
+        gaps_.append({"id": "coverage", "title": f"Generic checks only for {', '.join(generic)}",
+                      "detail": "LadPock doesn't have a framework-aware pack for these yet, so framework-specific "
+                                "mistakes in them may be missed. The AI review helps fill this gap.",
+                      "fix": "Run the local AI review", "href": f"#/project/{project_id}"})
+    if not summary.get("dependencies"):
+        gaps_.append({"id": "lockfile", "title": "No dependencies were checked",
+                      "detail": "No lockfile was found, so LadPock couldn't match exact package versions "
+                                "against known vulnerabilities.",
+                      "fix": "Commit your lockfile (package-lock.json, pnpm-lock.yaml, poetry.lock, Cargo.lock ...)",
+                      "href": None})
+    used = summary.get("options") or {}
+    if used.get("scanners") is False and scan["profile"] != "quick":
+        gaps_.append({"id": "scanners-off", "title": "Installed scanners were turned off for the last scan",
+                      "detail": "gitleaks, osv-scanner and opengrep add checks LadPock doesn't have built in.",
+                      "fix": "Scan again with Installed scanners on", "href": f"#/project/{project_id}"})
+    if not db.ai_last_run(project_id) and not db.ai_last_run(project_id, online=True):
+        gaps_.append({"id": "ai", "title": "No AI review yet",
+                      "detail": "Pattern checks can't follow logic. An AI review reads your routes, commands and code "
+                                "for things like missing ownership checks.",
+                      "fix": "Turn on the local AI review and scan", "href": f"#/project/{project_id}"})
+    unticked = [i for i in human if not i["checked_at"]]
+    if unticked:
+        gaps_.append({"id": "human", "title": f"{len(unticked)} of {len(human)} manual checks not confirmed",
+                      "detail": "Some of the most important protections can't be seen in code: two-factor login, "
+                                "tested backups, spending limits, and testing one user can't see another's data.",
+                      "fix": "Work through Needs a human", "href": f"#/project/{project_id}/human"})
+    explanation["gaps"] = gaps_
+    return explanation
 
 
 def ai_payload(app: App, db: DB, project_id: int, row) -> dict:
     last = db.ai_last_run(project_id)
+    last_online = db.ai_last_run(project_id, online=True)
     ai_job = app.running_job(project_id, "ai")
     return {
         "nightly": bool(row["ai_nightly"]),
+        "never_online": bool(row["online_never"]),
         "job": ai_job.id if ai_job else None,
         "last_run": dict(last) if last else None,
+        "last_online_run": dict(last_online) if last_online else None,
         "leads": [dict(lead) for lead in db.ai_leads(project_id)],
         "verdicts": {ref: {"verdict": v["verdict"], "reason": v["reason"], "model": v["model"]}
                      for ref, v in db.ai_verdicts(project_id).items()},
@@ -512,18 +623,30 @@ def api_remove_project(app, db, match, query, body):
     return 200, {"ok": True}
 
 
-def api_scan(app, db, match, query, body):
+def _runnable(db: DB, match: re.Match[str]):
     row = db.get_project_by_id(_project_id(match))
     if not row:
         raise ApiError(404, "Project not found")
     if not Path(row["path"]).is_dir():
         raise ApiError(400, "That project's folder no longer exists")
-    profile = body.get("profile", "standard")
-    if profile not in PROFILES:
-        raise ApiError(400, "Unknown profile")
-    options = {"profile": profile, "offline": _bool(body, "offline"), "external": _bool(body, "external", True),
-               "history": True if _bool(body, "history") else None}
-    job = app.start_scan(row["id"], row["name"], row["path"], options)
+    return row
+
+
+def api_run(app, db, match, query, body):
+    """The scan panel: every option is a toggle, then one Scan button."""
+    row = _runnable(db, match)
+    job = app.start_run(row["id"], row["name"], run_options(body))
+    return 202, {"job": job.id}
+
+
+def api_scan(app, db, match, query, body):
+    """Older form of /run, kept for scripts: offline/external instead of online/scanners."""
+    row = _runnable(db, match)
+    legacy = {"profile": body.get("profile", "standard"), "online": not _bool(body, "offline"),
+              "scanners": _bool(body, "external", True)}
+    if _bool(body, "history"):
+        legacy["history"] = True
+    job = app.start_run(row["id"], row["name"], run_options(legacy))
     return 202, {"job": job.id}
 
 
@@ -544,15 +667,19 @@ def api_jobs(app, db, match, query, body):
     return 200, {"jobs": jobs}
 
 
+def _full_options(body: dict) -> dict:
+    """Run-everything defaults: a full scan plus the local AI review. Accepts the scan panel's options too."""
+    legacy = {k: v for k, v in body.items() if k in ("profile", "online", "scanners", "history", "local_ai", "online_ai")}
+    if "ai" in body:
+        legacy["local_ai"] = body["ai"]
+    if "offline" in body:
+        legacy["online"] = not _bool(body, "offline")
+    return run_options(legacy, profile="full", local_ai=True)
+
+
 def api_full_check(app, db, match, query, body):
-    project_id = _project_id(match)
-    row = db.get_project_by_id(project_id)
-    if not row or not Path(row["path"]).is_dir():
-        raise ApiError(404, "Project folder not found")
-    ai, offline = _bool(body, "ai", True), _bool(body, "offline")
-    steps = list(SCAN_STEPS) + (["Local AI review"] if ai else [])
-    job = app.start_job("full", project_id, f"Full check of {row['name']}", steps,
-                        lambda db, job: full_check(db, job, project_id, ai, offline=offline))
+    row = _runnable(db, match)
+    job = app.start_run(row["id"], row["name"], _full_options(body))
     return 202, {"job": job.id}
 
 
@@ -560,9 +687,8 @@ def api_full_check_all(app, db, match, query, body):
     projects = [p for p in db.list_projects() if Path(p["path"]).is_dir()]
     if not projects:
         raise ApiError(400, "Add a project first")
-    ai, offline = _bool(body, "ai", True), _bool(body, "offline")
-    per_project = list(SCAN_STEPS) + (["Local AI review"] if ai else [])
-    steps = [f"{p['name']}: {s}" for p in projects for s in per_project]
+    options = _full_options(body)
+    steps = [f"{p['name']}: {s}" for p in projects for s in run_steps(options)]
 
     def work(db: DB, job: Job) -> dict:
         results = []
@@ -570,10 +696,10 @@ def api_full_check_all(app, db, match, query, body):
             if job.stop.is_set():
                 break
             job.log.append(f"== {project['name']} ({i + 1} of {len(projects)})")
-            results.append(full_check(db, job, project["id"], ai, prefix=f"{project['name']}: ", offline=offline))
+            results.append(run_project(db, job, project["id"], options, prefix=f"{project['name']}: "))
         return {"projects": results}
 
-    job = app.start_job("full-all", None, f"Full check of all {len(projects)} projects", steps, work)
+    job = app.start_job("full-all", None, f"{run_title(options)} of all {len(projects)} projects", steps, work)
     return 202, {"job": job.id}
 
 
@@ -727,6 +853,59 @@ def api_ai_unschedule(app, db, match, query, body):
     return 200, ai_system.schedule_status()
 
 
+# paid online AI
+
+
+def api_online_status(app, db, match, query, body):
+    return 200, ai_online.status(db)
+
+
+def api_online_settings(app, db, match, query, body):
+    budget = body.get("budget")
+    if budget is not None and (isinstance(budget, bool) or not isinstance(budget, (int, float))):
+        raise ApiError(400, "budget must be a number of dollars")
+    effort = body.get("effort")
+    try:
+        ai_online.save(db, enabled_=_bool(body, "enabled") if "enabled" in body else None,
+                       budget_=float(budget) if budget is not None else None,
+                       effort_=str(effort) if effort is not None else None)
+    except ValueError as exc:
+        raise ApiError(400, str(exc)) from exc
+    return 200, ai_online.status(db)
+
+
+def api_online_key(app, db, match, query, body):
+    """Store the key in Windows Credential Manager. It's never returned, logged or written to LadPock's database."""
+    key = body.get("key")
+    if not isinstance(key, str) or len(key) > 400:
+        raise ApiError(400, "Paste your Anthropic API key")
+    try:
+        ai_keys.store(key)
+    except ai_keys.KeyError_ as exc:
+        raise ApiError(400, str(exc)) from exc
+    return 200, ai_online.status(db)
+
+
+def api_online_forget_key(app, db, match, query, body):
+    ai_keys.delete()
+    return 200, ai_online.status(db)
+
+
+def api_online_plan(app, db, match, query, body):
+    row = db.get_project_by_id(_project_id(match))
+    if not row:
+        raise ApiError(404, "Project not found")
+    return 200, {**ai_online.status(db), **ai_online.plan(db, row["id"])}
+
+
+def api_online_never(app, db, match, query, body):
+    project_id = _project_id(match)
+    if not db.get_project_by_id(project_id):
+        raise ApiError(404, "Project not found")
+    db.set_online_never(project_id, _bool(body, "never"))
+    return 200, {"ok": True}
+
+
 def api_routes(app, db, match, query, body):
     row = db.get_project_by_id(_project_id(match))
     if not row or not Path(row["path"]).is_dir():
@@ -804,6 +983,7 @@ ROUTES: list[tuple[str, re.Pattern[str], Callable]] = [
     ("GET", re.compile(r"/api/projects/(\d+)"), api_project),
     ("DELETE", re.compile(r"/api/projects/(\d+)"), api_remove_project),
     ("POST", re.compile(r"/api/projects/(\d+)/scan"), api_scan),
+    ("POST", re.compile(r"/api/projects/(\d+)/run"), api_run),
     ("GET", re.compile(r"/api/projects/(\d+)/routes"), api_routes),
     ("GET", re.compile(r"/api/projects/(\d+)/advisories"), api_advisories),
     ("GET", re.compile(r"/api/projects/(\d+)/fix-prompt"), api_fix_prompt),
@@ -827,6 +1007,12 @@ ROUTES: list[tuple[str, re.Pattern[str], Callable]] = [
     ("POST", re.compile(r"/api/projects/(\d+)/ai/run"), api_ai_run),
     ("POST", re.compile(r"/api/projects/(\d+)/ai/nightly"), api_ai_nightly),
     ("POST", re.compile(r"/api/projects/(\d+)/ai/leads/(\d+)"), api_ai_lead),
+    ("GET", re.compile(r"/api/online"), api_online_status),
+    ("POST", re.compile(r"/api/online/settings"), api_online_settings),
+    ("POST", re.compile(r"/api/online/key"), api_online_key),
+    ("DELETE", re.compile(r"/api/online/key"), api_online_forget_key),
+    ("GET", re.compile(r"/api/projects/(\d+)/online/plan"), api_online_plan),
+    ("POST", re.compile(r"/api/projects/(\d+)/online/never"), api_online_never),
 ]
 
 

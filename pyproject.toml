@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ladpock"
-version = "0.6.0"
+version = "0.7.0"
 description = "A free, local security checker for vibe-coded projects."
 readme = "README.md"
 license = "Apache-2.0"
@@ -24,6 +24,10 @@ classifiers = [
 # Deliberately empty: LadPock uses only the Python standard library so that
 # installing a security tool doesn't pull in a tree of third-party code.
 dependencies = []
+
+[project.optional-dependencies]
+# Only for the paid online AI review (Claude). Install with: pip install "ladpock[online-ai]"
+online-ai = ["anthropic>=1.0"]
 
 [project.urls]
 Homepage = "https://github.com/liamburgo23/ladpock"

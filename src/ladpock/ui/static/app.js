@@ -161,8 +161,8 @@ async function refreshFeeds() {
 
 function currentRoute() {
   const hash = location.hash.replace(/^#/, "") || "/";
-  const project = hash.match(/^\/project\/(\d+)(?:\/(\w+))?/);
-  if (project) return { name: "project", id: Number(project[1]), tab: project[2] || "findings" };
+  const project = hash.match(/^\/project\/(\d+)(?:\/(\w+))?(?:\/([\w-]+))?/);
+  if (project) return { name: "project", id: Number(project[1]), tab: project[2] || "findings", sub: project[3] || null };
   if (hash.startsWith("/add")) return { name: "add" };
   const help = hash.match(/^\/help(?:\/([\w-]+))?/);
   if (help) return { name: "help", section: help[1] || null };
@@ -184,7 +184,7 @@ async function route() {
       state.refreshed = true;
       refreshFeeds();  // fresh vulnerability data every time you open LadPock, whichever page you land on
     }
-    if (r.name === "project") await renderProject(r.id, r.tab, view);
+    if (r.name === "project") await renderProject(r.id, r.tab, view, r.sub);
     else if (r.name === "add") await renderAdd(await startFolder(), view);
     else if (r.name === "help") renderHelp(r.section);
     else if (r.name === "scanners") await renderScanners(view);
@@ -251,7 +251,7 @@ function progressBar(pct) {
 }
 
 function stopButton(j) {
-  if (!STOPPABLE.has(j.kind)) return null;
+  if (!STOPPABLE.has(j.kind) && !j.steps.some((step) => step.endsWith("AI review"))) return null;
   if (j.stopping) return h("span", { class: "faint" }, "Stopping after the current step…");
   return h("button", { class: "btn small", onclick: async (ev) => {
     ev.preventDefault();
@@ -274,6 +274,11 @@ function finishMessage(j) {
   if (r.findings != null) bits.push(plural(r.findings, "finding"));
   if (r.leads != null) bits.push(plural(r.leads, "new AI lead"));
   if (r.ai === "unavailable") bits.push("AI review skipped (no local model)");
+  if (r.online_leads != null) bits.push(plural(r.online_leads, "new Claude lead"));
+  if (r.online_cost != null) bits.push(`online AI cost about $${r.online_cost.toFixed(2)}`);
+  if (r.online_ai === "budget") bits.push("online AI stopped at your monthly budget");
+  if (r.online_ai === "not set up") bits.push("online AI skipped (not set up yet)");
+  if (r.online_ai === "unavailable" || r.online_ai === "error") bits.push("online AI review failed (see the task log)");
   if (r.status === "stopped" || r.ai === "stopped") bits.push("stopped early; the next run continues from there");
   if (r.status === "paused") bits.push(r.message || "paused");
   return `${j.title} finished${bits.length ? ": " + bits.join(", ") : ""}`;
@@ -282,7 +287,7 @@ function finishMessage(j) {
 function jobFinished(j) {
   toast(finishMessage(j));
   const r = currentRoute();
-  if (r.name === "project" && (j.project_id === r.id || j.kind === "full-all")) renderProject(r.id, r.tab, state.view);
+  if (r.name === "project" && (j.project_id === r.id || j.kind === "full-all")) renderProject(r.id, r.tab, state.view, r.sub);
   else if (r.name === "scanners" && j.kind === "install") renderScanners(state.view);
   else if (r.name === "home") renderHome(state.view);
 }
@@ -518,7 +523,7 @@ async function renderAdd(path, view) {
 
 // ---------- project ----------
 
-async function renderProject(id, tab, view) {
+async function renderProject(id, tab, view, sub) {
   if (!document.querySelector(".project-page")) $("#app").replaceChildren(spinner("Loading project"));
   const data = await api("GET", `/api/projects/${id}`);
   if (view !== state.view) return;
@@ -536,17 +541,20 @@ async function renderProject(id, tab, view) {
       scan ? h("p", { class: "faint" },
         `Deep checks: ${coverage.deep.join(", ") || "none"}`,
         coverage.generic.length ? ` · Generic only: ${coverage.generic.join(", ")}` : "", " ", helpLink("coverage")) : null),
-    h("div", { class: "row", style: "align-items:center" },
-      gradeEl(scan ? scan.grade : null, true),
+    scan ? h("a", { class: "grade-link", href: `#/project/${id}/grade`, title: "Why this grade, and how to reach A+" },
+      gradeEl(scan.grade, true),
       h("div", null,
-        h("div", { style: "font-size:20px;font-weight:700" }, scan ? `${scan.score}/100` : "Not scanned"),
-        h("div", { class: "faint" }, scan ? `Last scanned ${ago(scan.finished_at)} (${scan.profile})` : "Run a check to get a grade"),
-        helpLink("grades", "What does this grade mean?"))));
+        h("div", { style: "font-size:20px;font-weight:700" }, `${scan.score}/100`),
+        h("div", { class: "faint" }, `Last scanned ${ago(scan.finished_at)} (${scan.profile})`),
+        h("span", { class: "help-inline" }, scan.grade === "A+" ? "Why this grade?" : "Why not A+? How to improve →")))
+      : h("div", { class: "row", style: "align-items:center" }, gradeEl(null, true),
+        h("div", null, h("div", { style: "font-size:20px;font-weight:700" }, "Not scanned"),
+          h("div", { class: "faint" }, "Scan to get a grade"), helpLink("grades", "How grades work"))));
 
-  const parts = [header, h("div", { id: "job-banner" }), fullCheckCard(p, data.profiles), scanCard(p, data.profiles, data.ai)];
+  const parts = [header, h("div", { id: "job-banner" }), scanPanel(p, data), aiSettings(p, data.ai)];
   if (!scan) {
     parts.push(h("div", { class: "card empty" }, h("h2", null, "No results yet"),
-      h("p", { class: "muted" }, "Press Run full check above to check everything, or run a single scan.")));
+      h("p", { class: "muted" }, "Choose what to run above, then press Scan.")));
   } else {
     const deps = data.findings.filter((f) => f.check_id === "LP-DEP-001").length;
     const humanDone = data.human.filter((i) => i.checked_at).length;
@@ -554,7 +562,8 @@ async function renderProject(id, tab, view) {
     const isNext = p.stack.includes("Next.js");
     const entryLabel = isTauri && isNext ? "Routes & commands" : isTauri ? "Commands" : "Routes";
     const leads = data.ai.leads.filter((l) => l.status !== "dismissed").length;
-    const tabs = [["findings", `Findings (${data.findings.length}${leads ? ` + ${leads} AI` : ""})`], ["routes", entryLabel],
+    const tabs = [["findings", `Findings (${data.findings.length}${leads ? ` + ${leads} AI` : ""})`],
+      ["grade", scan.grade === "A+" ? "Why this grade" : "Why not A+"], ["routes", entryLabel],
       ["deps", `Dependencies (${deps})`], ["human", `Needs a human (${humanDone}/${data.human.length})`], ["history", "History"]];
     parts.push(h("nav", { class: "tabs", "aria-label": "Project sections" }, tabs.map(([key, label]) =>
       h("a", { href: `#/project/${id}/${key}`, "aria-current": key === tab ? "page" : null }, label))));
@@ -564,6 +573,7 @@ async function renderProject(id, tab, view) {
     else if (tab === "deps") drawDeps(content, id, view);
     else if (tab === "human") drawHuman(content, id, data.human);
     else if (tab === "history") drawHistory(content, data.history);
+    else if (tab === "grade") drawGrade(content, id, data, sub);
     else drawFindings(content, id, data, summary);
   }
   parts.push(h("div", { class: "row", style: "justify-content:flex-end" },
@@ -575,72 +585,191 @@ async function renderProject(id, tab, view) {
     } }, "Remove from LadPock")));
   $("#app").replaceChildren(h("div", { class: "stack project-page" }, parts));
   drawJobBanner();
+  const focus = tab === "grade" && sub && document.getElementById(`cat-${sub}`);
+  if (focus) focus.scrollIntoView({ block: "center" });
 }
 
-function fullCheckCard(p, profiles) {
-  const full = profiles.full;
-  const ai = h("input", { type: "checkbox", id: "full-ai", checked: true });
-  return h("section", { class: "card hero", "aria-labelledby": "full-title" },
-    h("div", { class: "row spread" },
-      h("div", { class: "grow" },
-        h("h2", { id: "full-title" }, "Run a full check"),
-        h("p", { class: "muted" }, "Everything LadPock can do on this computer, one step after another:")),
-      runButton("Run full check", () => startTask(`/api/projects/${p.id}/full-check`, { ai: ai.checked }), true)),
-    h("ol", { class: "steps" },
-      h("li", null, h("strong", null, "Full scan. "), `All ${full.checks} checks that apply to this project, any installed scanners, `
-        + "live vulnerability data for your dependencies, a check that your packages really exist, and a search of git history "
-        + "for old secrets (if Gitleaks is installed)."),
-      h("li", null, h("strong", null, "Local AI review. "), "Your routes, commands and code read by the model on this computer. "
-        + "After the first run, only code that changed is re-read.")),
-    h("label", { class: "option", for: ai.id }, ai, h("span", null, "Include the local AI review",
-      h("br"), h("span", { class: "faint" }, "Skipped automatically if Ollama isn't running."))),
-    h("p", { class: "faint" }, "You can leave this page while it runs; progress shows here and in the top bar. ", helpLink("profiles", "What exactly runs?")));
+// ---------- scan panel: every option is a toggle, then one Scan button ----------
+
+const DEFAULT_OPTIONS = { profile: "standard", online: true, scanners: true, history: false, local_ai: false, online_ai: false };
+const OPTION_KEYS = Object.keys(DEFAULT_OPTIONS);
+const PRESETS = [
+  ["Everything free", "Full scan, live vulnerability data, installed scanners, git history and the local AI review.",
+    { profile: "full", online: true, scanners: true, history: true, local_ai: true, online_ai: false }],
+  ["Offline", "Nothing leaves this computer. Uses the vulnerability data LadPock last downloaded.",
+    { profile: "full", online: false, scanners: true, history: true, local_ai: true, online_ai: false }],
+  ["Quick", "Seconds: leaked secrets and vulnerable dependencies only.",
+    { profile: "quick", online: true, scanners: false, history: false, local_ai: false, online_ai: false }],
+  ["Deepest (paid)", "Everything free, plus Claude reviewing your code online, billed to your Anthropic account.",
+    { profile: "full", online: true, scanners: true, history: true, local_ai: true, online_ai: true }],
+];
+
+function savedOptions(projectId) {
+  try {
+    const saved = JSON.parse(load(`ladpock-scan-${projectId}`) || "null");
+    if (saved && OPTION_KEYS.every((k) => k in saved)) return { ...DEFAULT_OPTIONS, ...saved };
+  } catch (e) { /* use the default */ }
+  return { ...DEFAULT_OPTIONS };
 }
 
-function scanCard(p, profiles, aiState) {
-  let profile = "standard";
-  const seg = h("div", { class: "segmented", role: "group", "aria-label": "Scan profile" });
-  const desc = h("p", { class: "faint" });
-  const describe = () => {
-    const info = PROFILE_INFO[profile];
-    desc.textContent = `${info.looks} ${profiles[profile].checks} checks on this project. ${info.time}.`;
+function money(n) { return `$${Number(n || 0).toFixed(2)}`; }
+
+function openAiSettings() {
+  const box = document.getElementById("ai-settings");
+  if (!box) return;
+  box.open = true;
+  box.scrollIntoView({ block: "start", behavior: "smooth" });
+}
+
+function scanPanel(p, data) {
+  const opts = savedOptions(p.id);
+  const env = { scanners: null, missing: [], ai: null, online: null };  // filled in as each status loads
+  const presets = h("div", { class: "presets", role: "group", "aria-label": "Presets" });
+  const depth = h("div", { class: "segmented", role: "group", "aria-label": "How deep" });
+  const depthText = h("p", { class: "faint" });
+  const toggles = h("div", { class: "toggle-list" });
+  const summary = h("div", { class: "scan-summary" });
+  const go = runButton("Scan", () => start(), true);
+  go.classList.add("big");
+
+  const blocked = (key) => {
+    const quick = opts.profile === "quick";
+    if (key === "scanners" && quick) return "Quick scans skip installed scanners. Choose Standard or Full.";
+    if (key === "history") {
+      if (quick) return "Quick scans skip git history. Choose Standard or Full.";
+      if (!opts.scanners) return "Needs Installed scanners on.";
+      if (env.scanners && !env.scanners.includes("gitleaks")) return "Needs Gitleaks. Install it on the Scanners page.";
+    }
+    if (key === "local_ai" && env.ai && !env.ai.available) return "Ollama isn't running on this computer, so there's no local model to use.";
+    if (key === "online_ai") {
+      if (!opts.online) return "Needs free online data on (it can't run offline).";
+      const o = env.online;
+      if (!o) return null;
+      if (o.never) return "This project is set to never be sent online.";
+      if (!o.sdk_installed) return "Needs Anthropic's Python SDK: python -m pip install anthropic";
+      if (!o.enabled) return "Not set up yet. Allow it in AI settings.";
+      if (!(o.key.stored || o.key.env)) return "Add your Anthropic API key in AI settings.";
+    }
+    if (key === "online_tools") return "Not available yet.";
+    return null;
   };
-  for (const name of Object.keys(PROFILE_INFO)) {
-    seg.append(h("button", { type: "button", "aria-pressed": name === profile ? "true" : "false", onclick: (ev) => {
-      profile = name;
-      seg.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b === ev.currentTarget)));
-      describe();
-    } }, PROFILE_INFO[name].label));
-  }
-  describe();
-  const external = h("input", { type: "checkbox", id: "opt-external", checked: true });
-  const historyOpt = h("input", { type: "checkbox", id: "opt-history" });
-  const offline = h("input", { type: "checkbox", id: "opt-offline" });
-  const option = (input, label, help) => h("label", { class: "option", for: input.id }, input,
-    h("span", null, h("span", null, label), h("br"), h("span", { class: "faint" }, help)));
+  const effective = () => Object.fromEntries(OPTION_KEYS.map((k) => [k, k === "profile" ? opts.profile : Boolean(opts[k]) && !blocked(k)]));
+  const tag = (text, kind) => h("span", { class: `tag ${kind}` }, text);
 
-  const scannerHint = h("span", { class: "faint" }, "Gitleaks, OSV-Scanner and Opengrep, if they're installed.");
+  const row = (key, label, tags, help) => {
+    const reason = blocked(key);
+    const input = h("input", { type: "checkbox", class: "switch", role: "switch", id: `opt-${key}`,
+      checked: (opts[key] && !reason) || null, disabled: reason ? true : null });
+    input.addEventListener("change", () => { opts[key] = input.checked; draw(); });
+    const needsSettings = reason && (key === "local_ai" || key === "online_ai") && !reason.startsWith("Needs free");
+    return h("div", { class: `toggle-row${reason ? " disabled" : ""}` }, input,
+      h("div", { class: "grow" },
+        h("label", { for: input.id, class: "row" }, h("strong", null, label), tags),
+        h("div", { class: "faint" }, help),
+        reason ? h("div", { class: "reason" }, reason, needsSettings
+          ? h("button", { class: "btn link", onclick: openAiSettings }, "Open AI settings") : null) : null));
+  };
+
+  const scannerHelp = () => {
+    if (!env.scanners) return "Gitleaks, OSV-Scanner and Opengrep, if they're installed.";
+    return [env.scanners.length ? `Uses ${env.scanners.join(", ")}. ` : "None installed yet. ",
+      env.missing.length ? h("a", { href: "#/scanners" }, `Install ${env.missing.join(", ")} (free)`) : ""];
+  };
+  const localHelp = () => {
+    const base = "A model on this computer reads your routes, commands and code for logic bugs. After the first run only changed code is re-read.";
+    return env.ai && env.ai.available ? `${base} Model: ${env.ai.model}.` : base;
+  };
+  const onlineHelp = () => {
+    const base = "Claude reads the same parts with secrets masked, and double-checks the local model's leads. Billed to your own Anthropic account and stops at your monthly budget.";
+    const o = env.online;
+    if (!o || o.never) return base;
+    const todo = o.units + (o.leads || 0);
+    return [base, h("br"), todo
+      ? `${plural(todo, "part")} to send now (unchanged code isn't re-sent): about ${money(o.cost)}. ${money(o.left)} of ${money(o.budget)} left this month.`
+        + (o.cost > o.left ? " That's more than is left, so it reviews the most important parts first and stops at the budget; the next month (or a bigger budget) continues from there." : "")
+      : "Nothing has changed since its last review, so this would cost nothing."];
+  };
+
+  const drawSummary = (eff) => {
+    const profile = data.profiles[eff.profile];
+    const will = [`${PROFILE_INFO[eff.profile].label} scan: ${profile.checks} built-in checks that apply to this project`,
+      eff.online ? "Live vulnerability data for your dependencies" : "Saved vulnerability data (offline)"];
+    if (eff.online && profile.registry) will.push("Check your packages really exist on npm and PyPI");
+    if (eff.scanners) will.push(env.scanners ? (env.scanners.length ? `Run ${env.scanners.join(", ")}` : "Installed scanners (none installed yet)") : "Installed scanners");
+    if (eff.history) will.push("Search git history for deleted secrets");
+    if (eff.local_ai) will.push("Local AI review");
+    if (eff.online_ai) will.push("Paid online AI review with Claude");
+    const leaves = [];
+    if (eff.online) leaves.push("Package names and versions, to OSV.dev, npm and PyPI. CVE IDs, to EPSS.");
+    if (eff.online_ai) leaves.push("Your code with secrets masked, to Anthropic.");
+    const cost = eff.online_ai && env.online ? `About ${money(Math.min(env.online.cost, env.online.left))} on your Anthropic account, never more than your budget allows.` : "Free.";
+    const time = [PROFILE_INFO[eff.profile].time];
+    if (eff.local_ai) time.push("plus the local AI review: minutes, longer the first time");
+    if (eff.online_ai) time.push("plus a few seconds per part for the online review");
+    summary.replaceChildren(
+      h("div", null, h("h3", null, "This scan will"), h("ul", null, will.map((w) => h("li", null, w)))),
+      h("div", null, h("h3", null, "What leaves your computer"),
+        leaves.length ? h("ul", null, leaves.map((w) => h("li", null, w))) : h("p", null, "Nothing. This scan stays on this computer."),
+        h("p", { class: "faint" }, "Your code is never run.")),
+      h("div", null, h("h3", null, "Cost and time"), h("p", null, cost), h("p", { class: "faint" }, `${time.join(", ")}.`)));
+  };
+
+  const draw = () => {
+    const focused = document.activeElement && document.activeElement.id;
+    presets.replaceChildren(...PRESETS.map(([label, about, values]) => {
+      const pressed = OPTION_KEYS.every((k) => values[k] === opts[k]);
+      return h("button", { type: "button", class: "preset", "aria-pressed": pressed ? "true" : "false", title: about,
+        onclick: () => { Object.assign(opts, values); draw(); } }, h("strong", null, label), h("span", { class: "faint" }, about));
+    }));
+    depth.replaceChildren(...Object.keys(PROFILE_INFO).map((name) => h("button", { type: "button",
+      "aria-pressed": name === opts.profile ? "true" : "false", onclick: () => { opts.profile = name; draw(); } }, PROFILE_INFO[name].label)));
+    depthText.textContent = `${PROFILE_INFO[opts.profile].looks} ${data.profiles[opts.profile].checks} checks on this project. ${PROFILE_INFO[opts.profile].time}.`;
+    toggles.replaceChildren(
+      row("online", "Free online vulnerability data", [tag("Free", "free"), tag("online", "where")],
+        "Checks the exact versions in your lockfiles against OSV.dev, CISA's actively-exploited list and EPSS. Off means an offline scan."),
+      row("scanners", "Installed scanners", [tag("Free", "free"), tag("this computer", "where")], scannerHelp()),
+      row("history", "Search git history for secrets", [tag("Free", "free"), tag("this computer", "where")],
+        "Finds keys that were committed and later deleted: they're still in history. Slower."),
+      row("local_ai", "Local AI review", [tag("Free", "free"), tag("this computer", "where")], localHelp()),
+      row("online_ai", "Paid online AI review (Claude)", [tag("Paid", "paid"), tag("sends code", "where")], onlineHelp()),
+      row("online_tools", "Paid online scanners", [tag("Paid", "paid"), tag("online", "where")],
+        "Commercial services such as Snyk or Socket, using your own account."));
+    drawSummary(effective());
+    if (focused && document.getElementById(focused) == null) return;
+    if (focused && focused.startsWith("opt-")) document.getElementById(focused).focus();
+  };
+
+  const start = () => {
+    const eff = effective();
+    store(`ladpock-scan-${p.id}`, JSON.stringify(opts));
+    if (eff.online_ai && env.online && env.online.units + (env.online.leads || 0) > 0) {
+      const o = env.online;
+      const ok = confirm(`Send ${plural(o.units + (o.leads || 0), "part")} of ${p.name} to Anthropic for the Claude review?\n\n`
+        + `Secrets are masked first. Estimated cost about ${money(o.cost)}. You have ${money(o.left)} of your ${money(o.budget)} monthly `
+        + "budget left, and the review stops before going over it.");
+      if (!ok) return;
+    }
+    startTask(`/api/projects/${p.id}/run`, eff);
+  };
+
   api("GET", "/api/scanners").then((s) => {
-    const have = s.tools.filter((x) => x.installed).map((x) => x.name);
-    const missing = s.tools.filter((x) => !x.installed && x.supported).map((x) => x.name);
-    scannerHint.replaceChildren(have.length ? `Installed: ${have.join(", ")}. ` : "None installed yet. ",
-      missing.length ? h("a", { href: "#/scanners" }, `Install ${missing.join(", ")}`) : "");
+    env.scanners = s.tools.filter((t) => t.installed).map((t) => t.name);
+    env.missing = s.tools.filter((t) => !t.installed && t.supported).map((t) => t.name);
+    draw();
   }).catch(() => {});
-  const run = runButton("Run scan", () => startTask(`/api/projects/${p.id}/scan`, {
-    profile, external: external.checked, history: historyOpt.checked, offline: offline.checked }));
+  api("GET", "/api/ai").then((info) => { env.ai = info; draw(); }).catch((e) => { env.ai = { available: false, error: e.message }; draw(); });
+  api("GET", `/api/projects/${p.id}/online/plan`).then((info) => { env.online = info; draw(); }).catch(() => {});
+  draw();
 
-  return h("section", { class: "card", "aria-label": "Scan and AI review" },
-    h("div", { class: "scan-grid" },
-      h("div", { class: "stack" },
-        h("div", { class: "row spread" }, h("h2", null, "Or run one scan"), seg),
-        desc,
-        profileComparison(profiles),
-        h("div", null,
-          option(external, "Use installed scanners", scannerHint),
-          option(historyOpt, "Search git history for secrets", "Slower. Needs Gitleaks. Always on in Full."),
-          option(offline, "Offline", "Skip the network and use the last vulnerability data LadPock downloaded.")),
-        h("div", { class: "row" }, run, !p.exists ? h("span", { class: "faint" }, "This folder no longer exists.") : null)),
-      aiPanel(p, aiState)));
+  return h("section", { class: "card scan-panel", "aria-labelledby": "scan-title" },
+    h("div", { class: "row spread" }, h("h2", { id: "scan-title" }, "Scan this project"), helpLink("options", "What does each option do?")),
+    h("div", { class: "stack" },
+      h("div", null, h("h3", { class: "eyebrow" }, "Start from a preset"), presets),
+      h("div", null, h("div", { class: "row spread" }, h("h3", { class: "eyebrow" }, "How deep"), depth), depthText, profileComparison(data.profiles)),
+      h("div", null, h("h3", { class: "eyebrow" }, "What to include"), toggles),
+      summary,
+      h("div", { class: "scan-go" }, !p.exists ? h("span", { class: "faint" }, "This folder no longer exists.") : null,
+        h("span", { class: "faint" }, "You can leave this page while it runs."), go)));
 }
 
 function profileComparison(profiles) {
@@ -661,20 +790,99 @@ function profileComparison(profiles) {
     h("div", { class: "table-wrap" }, h("table", null,
       h("thead", null, h("tr", null, h("th", null, ""), names.map((n) => h("th", null, PROFILE_INFO[n].label)))),
       h("tbody", null, rows.map(([label, value]) => h("tr", null, h("th", { scope: "row" }, label), names.map((n) => h("td", null, value(n)))))))),
-    h("p", { class: "faint" }, "None of them run your code. “Run full check” above is Full plus the local AI review."));
+    h("p", { class: "faint" }, "None of them run your code. The Everything free preset is Full plus the local AI review."));
 }
 
 // ---------- local AI ----------
 
-function aiPanel(p, ai) {
-  const box = h("div", { class: "stack" }, h("h3", null, "Local AI review"), h("div", { class: "faint" }, h("span", { class: "spinner small" }), " Looking for a local model…"));
-  loadAi(box, p, ai);
-  return box;
+function aiSettings(p, ai) {
+  const local = h("div", { class: "stack" }, h("h3", null, "Local AI review"), h("div", { class: "faint" }, h("span", { class: "spinner small" }), " Looking for a local model…"));
+  const online = h("div", { class: "stack" }, h("h3", null, "Paid online AI review"), h("div", { class: "faint" }, h("span", { class: "spinner small" }), " Loading…"));
+  loadAi(local, p, ai);
+  loadOnline(online, p, ai);
+  return h("details", { class: "card ai-settings", id: "ai-settings", open: load("ladpock-ai-open") === "1" || null,
+    ontoggle: (ev) => store("ladpock-ai-open", ev.currentTarget.open ? "1" : "0") },
+    h("summary", null, h("h2", null, "AI settings"),
+      h("span", { class: "faint" }, "Local model, nightly reviews, and the paid online review")),
+    h("div", { class: "scan-grid", style: "margin-top:12px" }, local, online));
 }
 
-function externalSoon() {
-  return h("div", { class: "soon" }, h("span", { class: "chip" }, "Coming soon"),
-    h("span", { class: "faint" }, "External AI with your own API key, for a second opinion on serious findings."));
+async function loadOnline(box, p, ai) {
+  let info;
+  try { info = await api("GET", "/api/online"); } catch (e) { box.replaceChildren(h("h3", null, "Paid online AI review"), h("p", { class: "faint" }, e.message)); return; }
+  const redraw = (next) => { info = next; draw(); };
+  const draw = () => {
+    const parts = [h("h3", null, "Paid online AI review"),
+      h("p", { class: "faint" }, `Claude (${info.model}) reads the same parts as the local review, with secrets masked, and double-checks the local model's leads. `
+        + "It's billed to your own Anthropic account. Like local AI results, its leads never change the grade. ", helpLink("online-ai"))];
+    if (!info.sdk_installed) {
+      parts.push(h("div", { class: "callout" }, h("p", null, "First install Anthropic's Python SDK. It's optional, so LadPock itself stays dependency-free:"),
+        h("div", { class: "snippet" }, "python -m pip install anthropic"), h("p", { class: "faint" }, "Then restart ladpock ui.")));
+    }
+    const enabled = h("input", { type: "checkbox", class: "switch", role: "switch", id: "online-enabled", checked: info.enabled || null });
+    enabled.addEventListener("change", async () => {
+      try {
+        redraw(await api("POST", "/api/online/settings", { enabled: enabled.checked }));
+        toast(enabled.checked ? "Online AI review allowed. Turn it on in the scan panel when you want it." : "Online AI review turned off");
+      } catch (e) { enabled.checked = !enabled.checked; toast(e.message); }
+    });
+    parts.push(h("div", { class: "toggle-row bare" }, enabled, h("div", { class: "grow" },
+      h("label", { for: enabled.id }, h("strong", null, "Allow sending code to Anthropic")),
+      h("div", { class: "faint" }, "Nothing is sent until you also switch on the paid online AI review for a scan. Secrets are masked first."))));
+
+    const key = info.key;
+    if (key.stored) {
+      parts.push(h("div", { class: "row" }, h("span", null, "API key ", h("span", { class: "mono" }, key.masked)),
+        h("span", { class: "faint" }, "saved in Windows Credential Manager"),
+        h("button", { class: "btn small", onclick: async () => {
+          if (!confirm("Remove the saved API key from Windows Credential Manager?")) return;
+          redraw(await api("DELETE", "/api/online/key"));
+          toast("Key removed");
+        } }, "Remove")));
+    } else if (key.env) {
+      parts.push(h("p", { class: "faint" }, "Using the key in your ANTHROPIC_API_KEY environment variable."));
+    } else if (key.can_store) {
+      const input = h("input", { type: "password", class: "field grow", placeholder: "sk-ant-…", autocomplete: "off", "aria-label": "Anthropic API key" });
+      parts.push(h("div", { class: "form-inline" }, input, h("button", { class: "btn small", onclick: async () => {
+        try { redraw(await api("POST", "/api/online/key", { key: input.value })); toast("Key saved in Windows Credential Manager"); }
+        catch (e) { toast(e.message); }
+      } }, "Save key")),
+      h("p", { class: "faint" }, "Create a key at console.anthropic.com. It's stored in Windows Credential Manager, never in LadPock's files, and only its last four characters are ever shown."));
+    } else {
+      parts.push(h("p", { class: "faint" }, "Set ANTHROPIC_API_KEY in the terminal you start ladpock ui from."));
+    }
+
+    const budget = h("input", { type: "number", class: "field", min: "0", max: "1000", step: "1", value: String(info.budget), "aria-label": "Monthly budget in US dollars", style: "max-width:110px" });
+    const used = info.budget ? Math.min(100, Math.round(100 * info.spent / info.budget)) : 100;
+    parts.push(h("div", { class: "stack" },
+      h("div", { class: "form-inline" }, h("span", null, "Monthly budget $"), budget, h("button", { class: "btn small", onclick: async () => {
+        try { redraw(await api("POST", "/api/online/settings", { budget: Number(budget.value) })); toast("Budget saved"); } catch (e) { toast(e.message); }
+      } }, "Save")),
+      h("div", { class: "faint" }, `Spent this month: ${money(info.spent)} of ${money(info.budget)}. That's LadPock's estimate; your Anthropic console has the exact bill.`),
+      progressBar(used)));
+
+    const labels = { low: "Low: cheapest", medium: "Medium: balanced (default)", high: "High: most thorough, roughly twice the cost" };
+    const effort = h("select", { class: "field", "aria-label": "Effort", style: "max-width:280px" },
+      info.efforts.map((e) => h("option", { value: e, selected: e === info.effort || null }, labels[e] || e)));
+    effort.addEventListener("change", async () => { try { redraw(await api("POST", "/api/online/settings", { effort: effort.value })); } catch (e) { toast(e.message); } });
+    parts.push(h("label", { class: "row" }, h("span", { class: "faint" }, "Effort"), effort));
+
+    const never = h("input", { type: "checkbox", id: "online-never", checked: ai.never_online || null });
+    never.addEventListener("change", async () => {
+      await api("POST", `/api/projects/${p.id}/online/never`, { never: never.checked });
+      toast(never.checked ? `${p.name} will never be sent online` : `${p.name} can be sent to the online review`);
+      const r = currentRoute();
+      renderProject(p.id, r.tab, state.view, r.sub);
+    });
+    parts.push(h("label", { class: "option", for: never.id }, never, h("span", null, "Never send this project online", h("br"),
+      h("span", { class: "faint" }, "For client work or anything under an NDA. Overrides the scan panel."))));
+
+    const last = ai.last_online_run;
+    parts.push(last ? h("p", { class: "faint" }, `Last online review ${ago(last.finished_at || last.started_at)}: ${plural(last.done, "part")} read, `
+      + `${plural(last.leads, "new lead")}. ${last.message || ""}`) : h("p", { class: "faint" }, "No online review yet."));
+    box.replaceChildren(...parts);
+  };
+  draw();
 }
 
 async function loadAi(box, p, ai) {
@@ -685,7 +893,7 @@ async function loadAi(box, p, ai) {
     box.replaceChildren(title,
       h("p", { class: "muted" }, "Reads your routes, commands and code with a model running on this computer, to find logic bugs pattern checks can't. Free, and your code never leaves your machine."),
       h("p", { class: "faint" }, "Needs Ollama (ollama.com) running with a model installed, for example: ollama pull qwen2.5-coder:14b"),
-      h("p", { class: "faint" }, info.error || ""), helpLink("ai", "How the AI review works"), externalSoon());
+      h("p", { class: "faint" }, info.error || ""), helpLink("ai", "How the AI review works"));
     return;
   }
   const select = h("select", { class: "field", "aria-label": "Model" }, info.models.map((m) =>
@@ -730,7 +938,7 @@ async function loadAi(box, p, ai) {
     h("label", { class: "option", for: think.id }, think, h("span", null, "Let the model think first", h("br"), h("span", { class: "faint" }, "Slower, sometimes catches more."))),
     h("div", { class: "row" }, runBtn, estimateBtn), estimate, lastLine,
     h("label", { class: "option", for: nightly.id }, nightly, h("span", null, "Include in the nightly review")),
-    scheduleBlock(info.schedule || {}), externalSoon());
+    scheduleBlock(info.schedule || {}));
   drawJobBanner();  // the buttons just drawn should reflect a task that's already running
 }
 
@@ -784,7 +992,7 @@ function leadsSection(projectId, leads) {
     dismissed.length ? h("details", null, h("summary", { class: "faint", style: "padding:10px 20px;cursor:pointer" }, `${dismissed.length} dismissed`),
       dismissed.map((l) => leadEl(projectId, l))) : null);
   return h("div", { class: "stack" }, list,
-    h("p", { class: "faint" }, "Found by the local AI review and checked against your code (the quoted line exists), but not verified. Confirm the real ones to include them in the fix prompt; dismissed leads stay dismissed."));
+    h("p", { class: "faint" }, "Found by an AI review (local, or Claude online) and checked against your code: the quoted line exists. They're not verified and never change the grade. Confirm the real ones to include them in the fix prompt; dismissed leads stay dismissed."));
 }
 
 function leadEl(projectId, l) {
@@ -793,13 +1001,17 @@ function leadEl(projectId, l) {
     toast(status === "confirmed" ? "Confirmed. It's now included in the fix prompt." : status === "dismissed" ? "Dismissed" : "Reopened");
     renderProject(projectId, "findings", state.view);
   };
+  const who = (l.model || "").startsWith("claude") ? "Claude" : "AI";
+  const second = { confirmed: "looks real", doubtful: "probably not a real problem", unsure: "can't tell" }[l.online_verdict];
   return h("details", { class: "finding" },
-    h("summary", null, sevPill(l.severity), h("span", { class: "chip accent" }, l.status === "confirmed" ? "AI · confirmed" : "AI lead"),
+    h("summary", null, sevPill(l.severity), h("span", { class: "chip accent" }, l.status === "confirmed" ? `${who} · confirmed` : `${who} lead`),
+      second ? h("span", { class: `chip${l.online_verdict === "confirmed" ? " accent" : ""}` }, `Claude: ${second}`) : null,
       h("span", { class: "title" }, l.title), h("span", { class: "mono faint" }, `${l.file}:${l.line}`)),
     h("div", { class: "body" },
       h("div", { class: "snippet" }, l.quote),
       h("p", null, h("strong", null, "Why it might matter: "), l.explanation),
       l.fix ? h("p", null, h("strong", null, "Suggested fix: "), l.fix) : null,
+      second ? h("p", { class: "faint" }, h("strong", null, "Claude's second opinion: "), second, l.online_reason ? ` (${l.online_reason})` : "") : null,
       h("p", { class: "faint" }, `${l.category} · ${l.model}`),
       h("div", { class: "row" },
         l.status !== "confirmed" ? h("button", { class: "btn small", onclick: () => setStatus("confirmed") }, "Confirm") : null,
@@ -817,8 +1029,10 @@ function leadEl(projectId, l) {
 function drawFindings(container, projectId, data, summary) {
   const findings = data.findings;
   const cats = summary.categories || [];
-  container.append(h("div", { class: "scorecard" }, cats.map((c) => h("div", { class: "score-tile" },
-    h("span", { class: "label" }, c.name), gradeEl(c.grade)))));
+  container.append(h("div", { class: "scorecard" }, cats.map((c) => h("a", { class: "score-tile", href: `#/project/${projectId}/grade/${c.key}`,
+    title: c.grade === "A+" ? `${c.name}: no open findings` : `Why ${c.name} is ${c.grade}, and how to fix it` },
+    h("span", { class: "label" }, c.name), gradeEl(c.grade)))),
+    h("p", { class: "faint" }, "Click any grade to see where the points went and how to reach A+."));
 
   const scanners = (summary.scanners || []).map((s) => !s.available ? `${s.name} not installed` : s.ran ? `${s.name} ran` : `${s.name} failed`);
   const info = [`Built-in: ${summary.checks_run ?? "?"} checks`, ...scanners, `${summary.dependencies ?? 0} dependencies checked`];
@@ -905,12 +1119,114 @@ function findingEl(f, projectId, verdict) {
       f.snippet ? h("div", { class: "snippet" }, f.snippet) : null,
       h("p", null, h("strong", null, "Why it matters: "), f.message),
       f.fix ? h("p", null, h("strong", null, "How to fix: "), f.fix) : null,
-      verdict ? h("p", { class: "faint" }, h("strong", null, "Local AI second opinion: "),
+      verdict ? h("p", { class: "faint" }, h("strong", null, (verdict.model || "").startsWith("claude") ? "Claude's second opinion: " : "Local AI second opinion: "),
         { real: "likely real", false_alarm: "likely a false alarm", unsure: "can't tell" }[verdict.verdict] || verdict.verdict,
         ` (${verdict.reason}) Advisory only; it doesn't change the grade.`) : null,
       h("p", { class: "faint" }, [f.check_id, `confidence ${f.confidence}`, f.source !== "ladpock" ? `via ${f.source}` : null, ...(f.cwe || []), `ref ${f.ref}`].filter(Boolean).join(" · ")),
       actions));
   return details;
+}
+
+// ---------- why this grade ----------
+
+const WEIGHT_TEXT = "Critical findings take 40 points off their category, high 20, medium 8 and low 2. Low-confidence findings count half.";
+
+function drawGrade(container, id, data, focus) {
+  const a = data.assessment;
+  if (!a) { container.append(h("p", { class: "muted" }, "Scan this project first.")); return; }
+  const byRef = new Map(data.findings.map((f) => [f.ref, f]));
+  const where = (d) => (d.file ? `${d.file}${d.line ? `:${d.line}` : ""}` : "");
+  const promptButton = (refs, label) => h("button", { class: "btn small", onclick: async () => {
+    const query = refs.slice(0, 25).map((r) => `ref=${encodeURIComponent(r)}`).join("&");
+    const res = await api("GET", `/api/projects/${id}/fix-prompt?${query}`);
+    await copy(res.prompt);
+    toast("Fix prompt copied. Paste it into Claude Code or your AI assistant.");
+  } }, label);
+
+  // 1. the answer, in a sentence or two
+  const below = a.categories.filter((c) => c.score < 97).sort((x, y) => x.score - y.score);
+  const reasons = [];
+  if (a.perfect) reasons.push("Nothing is open. Every category is at 100.");
+  else {
+    if (a.cap) reasons.push(h("li", null, `Your categories average ${a.average}/100, but an open ${a.cap.severity} finding caps the overall score at `
+      + `${a.cap.limit} until it's fixed. A serious hole shouldn't hide behind tidy code.`));
+    else reasons.push(h("li", null, `Your overall score is the average of ${plural(a.categories.length, "category", "categories")}: ${a.average}/100.`));
+    if (below.length) reasons.push(h("li", null, "Categories below A+: ", below.map((c, i) => [i ? ", " : "",
+      h("a", { href: `#/project/${id}/grade/${c.key}` }, `${c.name} ${c.grade} (${c.score})`)])));
+    const counts = data.scan.summary.counts || {};
+    const open = SEVERITIES.filter((s) => counts[s]).map((s) => `${counts[s]} ${s}`);
+    if (open.length) reasons.push(h("li", null, `Open findings: ${open.join(", ")}. ${WEIGHT_TEXT}`));
+  }
+  container.append(h("section", { class: "card grade-hero" },
+    h("div", { class: "row" }, gradeEl(a.grade, true), h("div", { class: "grow" },
+      h("h2", null, a.perfect ? "Top marks: nothing open" : `Why ${a.grade} and not A+`),
+      h("div", { class: "faint" }, `${a.score}/100`))),
+    a.perfect ? h("p", null, reasons[0]) : h("ul", { class: "reasons" }, reasons)));
+
+  // 2. the path to A+, most serious first, with the grade after each step
+  if (a.plan.length) {
+    let before = { score: a.score, grade: a.grade };
+    container.append(h("section", { class: "card flush" },
+      h("div", { class: "group-head" }, "Your path to A+"),
+      a.plan.map((step, i) => {
+        const items = step.refs.map((r) => byRef.get(r)).filter(Boolean);
+        const from = before;
+        before = step;
+        return h("div", { class: "plan-step" },
+          h("span", { class: "num" }, String(i + 1)),
+          h("div", { class: "grow" },
+            h("div", { class: "row" }, h("strong", null, `Fix ${plural(step.count, `${step.severity} finding`)}`),
+              h("span", { class: "faint" }, `${from.grade} (${from.score})`), h("span", { class: "arrow" }, "→"), gradeEl(step.grade),
+              h("span", { class: "faint" }, `${step.score}/100`)),
+            h("ul", null, items.slice(0, 8).map((f) => h("li", null, h("span", null, f.title), " ", h("span", { class: "mono faint" }, where(f))))),
+            items.length > 8 ? h("p", { class: "faint" }, `…and ${items.length - 8} more`) : null),
+          promptButton(step.refs, `Copy fix prompt${step.count > 25 ? " (first 25)" : ""}`));
+      }),
+      h("p", { class: "faint", style: "padding:12px 20px" }, "Grades after each step assume the earlier steps are done. "
+        + "Accepting a risk also removes a finding, but only do that for deliberate choices.")));
+  }
+
+  // 3. where every point went
+  container.append(h("h2", null, "Where the points went"),
+    h("div", { class: "card flush" }, a.categories.map((c) => {
+      const worst = c.deductions.length ? c.deductions[0].severity : null;
+      const floor = c.floored ? (c.deductions.some((d) => d.severity === "medium") ? 70 : 83) : null;
+      return h("details", { class: `finding cat-detail${focus === c.key ? " focus" : ""}`, id: `cat-${c.key}`, open: (focus === c.key || (!focus && c.score < 97)) || null },
+        h("summary", null, gradeEl(c.grade), h("span", { class: "title" }, c.name), h("span", { class: "faint" }, `${c.score}/100`),
+          c.deductions.length ? h("span", { class: "faint" }, plural(c.deductions.length, "finding")) : h("span", { class: "cell-yes" }, "nothing open")),
+        h("div", { class: "body" },
+          c.deductions.length ? [
+            h("p", { class: "faint" }, `Starts at 100. ${c.deductions.length > 1 ? "These take" : "This takes"} ${c.deductions.reduce((s, d) => s + d.points, 0)} points off`
+              + (floor ? `, but a category whose worst finding is ${worst} can't drop below ${floor}, so it stays at ${c.score}.` : ".")),
+            h("div", { class: "table-wrap" }, h("table", null, h("tbody", null, c.deductions.map((d) => h("tr", null,
+              h("td", { class: "points" }, `−${d.points}`), h("td", null, sevPill(d.severity)),
+              h("td", null, d.title, d.confidence === "low" ? h("span", { class: "faint" }, " (low confidence: counts half)") : null),
+              h("td", { class: "mono faint" }, where(d))))))),
+            h("div", { class: "row" }, promptButton(c.deductions.map((d) => d.ref), `Copy fix prompt for ${c.name}`),
+              h("a", { class: "btn small", href: `#/project/${id}/findings` }, "See these findings")),
+          ] : h("p", { class: "muted" }, "No open findings in this category. That means none of LadPock's checks matched, not that it's guaranteed safe.")));
+    })));
+
+  // 4. how complete the assessment itself was
+  if (a.gaps.length) {
+    container.append(h("h2", null, "Make the assessment more complete"),
+      h("p", { class: "muted" }, "A grade is only as good as what was checked. These would let LadPock see more:"),
+      h("div", { class: "card flush list" }, a.gaps.map((g) => h("div", { class: "gap-row" },
+        h("div", { class: "grow" }, h("strong", null, g.title), h("p", { class: "faint" }, g.detail)),
+        g.href ? h("a", { class: "btn small", href: g.href }, g.fix) : h("span", { class: "faint" }, g.fix)))));
+  }
+
+  // 5. how it's worked out, and what it leaves out
+  const leads = data.ai.leads.filter((l) => l.status === "new").length;
+  container.append(h("section", { class: "card stack" },
+    h("h3", null, "How the grade is worked out"),
+    h("ul", null,
+      h("li", null, `Each category starts at 100. ${WEIGHT_TEXT}`),
+      h("li", null, "Small issues alone can't sink a category: with only medium findings it stays at 70 (C-) or above, with only low ones at 83 (B) or above."),
+      h("li", null, "The overall score is the average of the categories, capped at 59 (F) while a critical finding is open and 79 (C+) while a high one is."),
+      h("li", null, "A+ is 97 or more, A 93, B 83, C 73, D 63; below 60 is F.")),
+    h("p", { class: "faint" }, leads ? `${plural(leads, "AI lead")} ${leads === 1 ? "is" : "are"} waiting for you on the Findings tab. AI leads never change the grade, so confirm or dismiss them yourself. ` : "",
+      "Some protections can't be seen in code at all, so work through the Needs a human tab too. ", helpLink("grades", "More about grades"))));
 }
 
 // ---------- routes / deps / human / history ----------
@@ -1073,7 +1389,7 @@ const HELP = [
     ["Built-in checks: patterns and structure, such as admin keys in browser code, routes that never check who's calling, Supabase tables without Row Level Security, or Tauri commands that write wherever the page says.",
       "Installed scanners, if you have them: Gitleaks for secrets (including git history), OSV-Scanner and Opengrep.",
       "Your dependencies, checked against live vulnerability databases every time.",
-      "Optionally, a local AI model that reads your code for logic bugs patterns can't see."],
+      "Optionally, an AI review that reads your code for logic bugs patterns can't see: a free local model, or Claude online with your own API key."],
     "Everything it finds becomes a finding with a severity and a confidence. Findings are grouped into categories, and each category gets a grade.",
   ]],
   ["running", "Running tasks", [
@@ -1088,7 +1404,7 @@ const HELP = [
     "Quick looks for leaked keys and passwords, committed .env files, and known vulnerabilities in your dependencies. It takes seconds. Use it before a commit or deploy.",
     "Standard runs every built-in check that applies to your project: sign-in, access control, routes and Tauri commands, injection, payments, config, AI code smells and supply chain. It also uses any installed scanners, and checks that the packages you depend on really exist on npm or PyPI (AI assistants sometimes invent names). It's the default for everyday use.",
     "Full is Standard plus a search of your git history for secrets that were committed and later deleted. That needs Gitleaks installed. Use it before a release, or weekly.",
-    "Run full check is Full followed by the local AI review: everything LadPock can do on this computer. Check all projects does that for every project, one after another.",
+    "The Everything free preset is Full followed by the local AI review: everything LadPock can do for free. Check all projects on the home page does that for every project, one after another.",
     "None of these run your code, install packages or execute build scripts.",
   ]],
   ["grades", "How grades work", [
@@ -1096,6 +1412,34 @@ const HELP = [
     "A pile of small issues can't fail a category on its own. Only critical or high findings can take it below C-, and only medium ones below B.",
     "The overall grade is the average of the categories, capped while a serious finding is open. With an open critical issue it's at most F (59). With an open high issue it's at most C+ (79). A leaked key shouldn't hide behind tidy code.",
     "Roughly: A means no obvious problems found, B means a few things to tidy, C means real issues worth fixing soon, and D or F means something serious is open. A good grade isn't a guarantee: LadPock can't see your business logic, your dashboards or your production settings.",
+    "Click a project's grade, or any category grade, to see exactly where the points went, the grade you'd reach after each round of fixes, a fix prompt for each step, and what would make the assessment itself more complete.",
+  ]],
+  ["options", "Scan options", [
+    "The scan panel lets you choose exactly what runs and what leaves your computer, then press Scan. Presets set the toggles for you:",
+    ["Everything free: a Full scan, live vulnerability data, installed scanners, git history and the local AI review.",
+      "Offline: the same, but nothing leaves your computer. Vulnerability data comes from LadPock's last download.",
+      "Quick: leaked secrets and vulnerable dependencies, in seconds.",
+      "Deepest (paid): everything free plus the paid online AI review."],
+    "The toggles:",
+    ["Free online vulnerability data: your exact dependency versions checked against OSV.dev, CISA's actively-exploited list and EPSS, plus a check that your packages exist on npm and PyPI. Sends package names and versions, never code.",
+      "Installed scanners: Gitleaks, OSV-Scanner and Opengrep, if installed. Free, and they run on this computer.",
+      "Search git history: finds secrets that were committed and later deleted. Needs Gitleaks.",
+      "Local AI review: a model on this computer reads your code for logic bugs. Free and private, but needs Ollama.",
+      "Paid online AI review: Claude reads your code with secrets masked. Billed to your own Anthropic account, within a monthly budget you set.",
+      "Paid online scanners: commercial services with your own account. Not available yet."],
+    "A greyed-out toggle says why it can't be used right now, for example a missing scanner or no API key. Your choices are remembered for each project.",
+  ]],
+  ["online-ai", "The paid online AI review", [
+    "Claude, Anthropic's model, reviews your code the same way the local model does: routes and commands first, then a second opinion on serious findings, then the rest of the code. It also double-checks the local model's open leads. It's a stronger reviewer than most models that fit on a home computer.",
+    "To set it up, open AI settings on a project page:",
+    ["install Anthropic's Python SDK: python -m pip install anthropic",
+      "allow sending code to Anthropic",
+      "paste an API key from console.anthropic.com (it's stored in Windows Credential Manager, not in LadPock's files), or set ANTHROPIC_API_KEY",
+      "set a monthly budget (5 dollars by default)"],
+    "Then switch on Paid online AI review in the scan panel. Before anything is sent, LadPock shows how many parts it will send and roughly what it will cost.",
+    "What's sent: the same parts of your code the local model reads, with secrets masked first. Nothing is sent for a project marked Never send this project online.",
+    "Costs: billed by Anthropic to your account. LadPock records an estimate of every call and stops before a run would go over your monthly budget. Unchanged code isn't sent again, so later runs only pay for what changed.",
+    "Results are leads, like the local review's: they never change the grade, and quoted code must exist in your project before you see a lead.",
   ]],
   ["severity", "Severity and confidence", [
     "Severity is how bad it would be if the problem is real. Critical means someone could take over accounts, data or money now. High means a serious hole. Medium means a weakness worth fixing. Low means hardening.",

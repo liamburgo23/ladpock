@@ -144,6 +144,18 @@ CREATE TABLE IF NOT EXISTS human_checks (
     checked_at TEXT NOT NULL,
     PRIMARY KEY (project_id, item_id)
 );
+CREATE TABLE IF NOT EXISTS online_usage (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER REFERENCES projects(id) ON DELETE SET NULL,
+    created_at TEXT NOT NULL,
+    month TEXT NOT NULL,
+    model TEXT,
+    input_tokens INTEGER DEFAULT 0,
+    output_tokens INTEGER DEFAULT 0,
+    cache_read_tokens INTEGER DEFAULT 0,
+    cache_write_tokens INTEGER DEFAULT 0,
+    cost REAL NOT NULL
+);
 CREATE TABLE IF NOT EXISTS suppressions (
     project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     ref TEXT NOT NULL,
@@ -175,9 +187,15 @@ class DB:
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(projects)")}
         if "ai_nightly" not in columns:
             self.conn.execute("ALTER TABLE projects ADD COLUMN ai_nightly INTEGER NOT NULL DEFAULT 0")
+        if "online_never" not in columns:
+            self.conn.execute("ALTER TABLE projects ADD COLUMN online_never INTEGER NOT NULL DEFAULT 0")
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(ai_runs)")}
         if "rejected" not in columns:
             self.conn.execute("ALTER TABLE ai_runs ADD COLUMN rejected INTEGER DEFAULT 0")
+        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(ai_leads)")}
+        if "online_verdict" not in columns:
+            self.conn.execute("ALTER TABLE ai_leads ADD COLUMN online_verdict TEXT")
+            self.conn.execute("ALTER TABLE ai_leads ADD COLUMN online_reason TEXT")
 
     def close(self) -> None:
         self.conn.close()
@@ -427,7 +445,8 @@ class DB:
     def ai_prune(self, project_id: int, current_keys: set[str]) -> None:
         """Forget units (and their open leads) for code that no longer exists."""
         for row in self.conn.execute("SELECT unit_key FROM ai_units WHERE project_id = ?", (project_id,)).fetchall():
-            if row["unit_key"] not in current_keys:
+            # Online reviews of a unit are stored as "online:<unit key>" and live as long as the unit does.
+            if row["unit_key"].removeprefix("online:") not in current_keys:
                 self.conn.execute("DELETE FROM ai_units WHERE project_id = ? AND unit_key = ?", (project_id, row["unit_key"]))
                 self.conn.execute("DELETE FROM ai_leads WHERE project_id = ? AND unit_key = ? AND status = 'new'",
                                   (project_id, row["unit_key"]))
@@ -481,10 +500,44 @@ class DB:
             self.conn.execute(self._AI_RUN_UPDATES[key], (value, run_id))
         self.conn.commit()
 
-    def ai_last_run(self, project_id: int) -> sqlite3.Row | None:
+    def ai_last_run(self, project_id: int, online: bool = False) -> sqlite3.Row | None:
+        """The latest local review, or with online=True the latest paid online review."""
+        sql = ("SELECT * FROM ai_runs WHERE project_id = ? AND trigger = 'online' ORDER BY id DESC LIMIT 1" if online
+               else "SELECT * FROM ai_runs WHERE project_id = ? AND trigger IS NOT 'online' ORDER BY id DESC LIMIT 1")
+        return self.conn.execute(sql, (project_id,)).fetchone()
+
+    def ai_leads_to_verify(self, project_id: int, model: str) -> list[sqlite3.Row]:
+        """Open leads from the local model that the online model hasn't checked yet."""
         return self.conn.execute(
-            "SELECT * FROM ai_runs WHERE project_id = ? ORDER BY id DESC LIMIT 1", (project_id,)
-        ).fetchone()
+            "SELECT * FROM ai_leads WHERE project_id = ? AND status = 'new' AND online_verdict IS NULL AND model != ?",
+            (project_id, model),
+        ).fetchall()
+
+    def ai_set_online_verdict(self, lead_id: int, verdict: str, reason: str) -> None:
+        self.conn.execute("UPDATE ai_leads SET online_verdict = ?, online_reason = ? WHERE id = ?",
+                          (verdict, reason, lead_id))
+        self.conn.commit()
+
+    # paid online AI
+    def set_online_never(self, project_id: int, never: bool) -> None:
+        self.conn.execute("UPDATE projects SET online_never = ? WHERE id = ?", (int(never), project_id))
+        self.conn.commit()
+
+    def online_record(self, project_id: int | None, model: str, input_tokens: int, output_tokens: int,
+                      cache_read: int, cache_write: int, cost: float) -> None:
+        now = iso()
+        self.conn.execute(
+            "INSERT INTO online_usage (project_id, created_at, month, model, input_tokens, output_tokens, "
+            "cache_read_tokens, cache_write_tokens, cost) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (project_id, now, now[:7], model, input_tokens, output_tokens, cache_read, cache_write, cost),
+        )
+        self.conn.commit()
+
+    def online_spent(self, month: str | None = None) -> float:
+        """Dollars spent on the online review this calendar month (UTC)."""
+        row = self.conn.execute("SELECT COALESCE(SUM(cost), 0) AS total FROM online_usage WHERE month = ?",
+                                (month or iso()[:7],)).fetchone()
+        return float(row["total"])
 
     # "needs a human" checklist
     def human_checks(self, project_id: int) -> dict[str, str]:

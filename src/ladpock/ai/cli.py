@@ -55,6 +55,23 @@ def add_parser(sub) -> None:
 
     actions.add_parser("unschedule", help="remove the nightly task")
 
+    paid = actions.add_parser("online", help="paid online AI review with Claude (your Anthropic API key, your budget)")
+    online_actions = paid.add_subparsers(dest="online_command", required=True)
+    online_actions.add_parser("status", help="show the key, budget and spend this month")
+    online_actions.add_parser("key", help="save your Anthropic API key in Windows Credential Manager")
+    online_actions.add_parser("forget-key", help="remove the saved key")
+    setup = online_actions.add_parser("set", help="turn the online review on or off, set the budget and effort")
+    setup.add_argument("--enable", action=argparse.BooleanOptionalAction, default=None,
+                       help="allow LadPock to send redacted code to Anthropic")
+    setup.add_argument("--budget", type=float, help="monthly limit in US dollars (default 5)")
+    setup.add_argument("--effort", choices=["low", "medium", "high"], help="how hard the model thinks (and costs)")
+    paid_review = online_actions.add_parser("review", help="review a project now, after showing the estimated cost")
+    paid_review.add_argument("path", nargs="?", default=".")
+    paid_review.add_argument("--yes", action="store_true", help="don't ask for confirmation")
+    never = online_actions.add_parser("never", help="never send this project online (on), or allow it again (off)")
+    never.add_argument("state", choices=["on", "off"])
+    never.add_argument("path", nargs="?", default=".")
+
 
 def _project(db: DB, path: str):
     root = Path(path).resolve()
@@ -86,8 +103,70 @@ def run(args, db: DB) -> int:
         return 2
 
 
+def _online(args, db: DB) -> int:
+    from . import keys, online
+
+    cmd = args.online_command
+    if cmd == "status":
+        info = online.status(db)
+        key = info["key"]
+        print(f"Anthropic SDK: {'installed' if info['sdk_installed'] else 'not installed (python -m pip install anthropic)'}")
+        print(f"API key: {key['masked'] or ('from ANTHROPIC_API_KEY' if key['env'] else 'not set (ladpock ai online key)')}")
+        print(f"Online review: {'on' if info['enabled'] else 'off (ladpock ai online set --enable)'}, model "
+              f"{info['model']}, effort {info['effort']}")
+        print(f"Spent this month: ${info['spent']:.2f} of ${info['budget']:.2f}")
+        return 0
+    if cmd == "key":
+        import getpass
+
+        try:
+            keys.store(getpass.getpass("Paste your Anthropic API key (it won't be shown): "))
+        except keys.KeyError_ as exc:
+            print(exc, file=sys.stderr)
+            return 2
+        print(f"Saved {keys.masked(keys.load())} in Windows Credential Manager.")
+        return 0
+    if cmd == "forget-key":
+        print("Removed the saved key." if keys.delete() else "No saved key.")
+        return 0
+    if cmd == "set":
+        try:
+            online.save(db, enabled_=args.enable, budget_=args.budget, effort_=args.effort)
+        except ValueError as exc:
+            print(exc, file=sys.stderr)
+            return 2
+        return _online(argparse.Namespace(online_command="status"), db)
+    project = _project(db, args.path)
+    if cmd == "never":
+        db.set_online_never(project["id"], args.state == "on")
+        print(f"{project['name']}: {'never sent online' if args.state == 'on' else 'may be sent to the online review'}")
+        return 0
+    if not online.enabled(db):
+        print("The online review is off. Turn it on with: ladpock ai online set --enable", file=sys.stderr)
+        return 2
+    plan = online.plan(db, project["id"])
+    info = online.status(db)
+    print(f"{project['name']}: {plan['units']} part(s) and {plan['leads']} local lead(s) to send, about "
+          f"${plan['cost']:.2f} (up to ${info['left']:.2f} left this month). Secrets are masked before sending.")
+    if not args.yes:
+        from ..cli import ask_yes
+
+        if not ask_yes("Send them to Anthropic now? [y/N] "):
+            return 1
+    try:
+        summary = online.run_online_review(db, project["id"], online.OnlineClient(effort=online.effort(db)))
+    except online.OnlineAIError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    if summary.message:
+        print(summary.message)
+    return 0 if summary.status in ("done", "budget") else 1
+
+
 def _dispatch(args, db: DB) -> int:
     cmd = args.ai_command
+    if cmd == "online":
+        return _online(args, db)
     if cmd == "status":
         info = settings.status(db)
         if not info["available"]:
