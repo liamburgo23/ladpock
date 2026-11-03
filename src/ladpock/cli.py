@@ -369,6 +369,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     ai_cli.add_parser(sub)
 
+    sub.add_parser("mcp", help="run as an MCP server so Claude Code can scan while it writes code "
+                              "(claude mcp add ladpock -- ladpock mcp)")
+    sub.add_parser("precommit", help="scan the staged files and block the commit if they add secrets (used by the hook)")
+    hook = sub.add_parser("hook", help="install or remove LadPock's git pre-commit hook in a repository")
+    hook.add_argument("action", choices=["install", "remove"])
+    hook.add_argument("path", nargs="?", default=".")
+    hook.add_argument("--force", action="store_true", help="replace an existing pre-commit hook (it's kept as a backup)")
+
     ui = sub.add_parser("ui", help="open the dashboard in your browser (only reachable from this computer)")
     ui.add_argument("--port", type=int, default=8765, help="preferred port (default 8765; another is used if busy)")
     ui.add_argument("--no-browser", action="store_true", help="print the link instead of opening a browser")
@@ -380,7 +388,35 @@ COMMANDS = {
     "fix-prompt": cmd_fix_prompt,
     "advisories": cmd_advisories, "suppress": cmd_suppress, "projects": cmd_projects, "checks": cmd_checks,
     "doctor": cmd_doctor, "ui": cmd_ui, "scanners": cmd_scanners, "ai": lambda args, db: _ai_run(args, db),
+    "mcp": lambda args, db: _mcp(), "precommit": lambda args, db: _precommit(), "hook": lambda args, db: _hook(args),
 }
+
+
+def _mcp() -> int:
+    from .integrations import serve_mcp
+
+    return serve_mcp()
+
+
+def _precommit() -> int:
+    from .integrations import precommit
+
+    return precommit(Path.cwd())
+
+
+def _hook(args) -> int:
+    from .integrations import ToolError, install_hook, remove_hook
+
+    try:
+        if args.action == "install":
+            where = install_hook(Path(args.path), force=args.force)
+            print(f"Installed {where}. Commits that add secrets will be stopped (skip once with git commit --no-verify).")
+        else:
+            print("Removed LadPock's pre-commit hook." if remove_hook(Path(args.path)) else "No LadPock hook found.")
+    except ToolError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    return 0
 
 
 def _ai_run(args, db: DB) -> int:
