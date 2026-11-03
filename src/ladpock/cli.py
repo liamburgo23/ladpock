@@ -280,7 +280,32 @@ def cmd_ui(args, db: DB) -> int:
     from .ui.server import serve
 
     db.close()  # the server opens its own connection per request
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            ctypes.windll.kernel32.SetConsoleTitleW("LadPock dashboard (close this window to stop it)")
+        except (AttributeError, OSError):
+            pass
     return serve(port=args.port, open_browser=not args.no_browser)
+
+
+def cmd_shortcut(args, db: DB) -> int:
+    from . import launcher
+
+    if args.action == "remove":
+        removed = launcher.remove()
+        print("\n".join(f"Removed {p}" for p in removed) or "No LadPock shortcuts found.")
+        return 0
+    try:
+        made = launcher.install(desktop=args.desktop)
+    except OSError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    for path in made:
+        print(f"Created {path}")
+    print("It opens the dashboard in a terminal window; close that window to stop LadPock.")
+    return 0
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -377,6 +402,10 @@ def build_parser() -> argparse.ArgumentParser:
     hook.add_argument("path", nargs="?", default=".")
     hook.add_argument("--force", action="store_true", help="replace an existing pre-commit hook (it's kept as a backup)")
 
+    shortcut = sub.add_parser("shortcut", help="add a LadPock launcher to the Start Menu / Applications / app menu")
+    shortcut.add_argument("action", nargs="?", choices=["install", "remove"], default="install")
+    shortcut.add_argument("--desktop", action="store_true", help="also put one on the desktop")
+
     ui = sub.add_parser("ui", help="open the dashboard in your browser (only reachable from this computer)")
     ui.add_argument("--port", type=int, default=8765, help="preferred port (default 8765; another is used if busy)")
     ui.add_argument("--no-browser", action="store_true", help="print the link instead of opening a browser")
@@ -388,7 +417,7 @@ COMMANDS = {
     "fix-prompt": cmd_fix_prompt,
     "advisories": cmd_advisories, "suppress": cmd_suppress, "projects": cmd_projects, "checks": cmd_checks,
     "doctor": cmd_doctor, "ui": cmd_ui, "scanners": cmd_scanners, "ai": lambda args, db: _ai_run(args, db),
-    "mcp": lambda args, db: _mcp(), "precommit": lambda args, db: _precommit(), "hook": lambda args, db: _hook(args),
+    "shortcut": cmd_shortcut, "mcp": lambda args, db: _mcp(), "precommit": lambda args, db: _precommit(), "hook": lambda args, db: _hook(args),
 }
 
 
