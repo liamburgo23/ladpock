@@ -27,7 +27,7 @@ CRITICAL (6)
 
 ## What it does
 
-- **113 built-in checks** across secrets, sign-in, authorization, API abuse and cost, injection, payments,
+- **120 built-in checks** across secrets, sign-in, authorization, API abuse and cost, injection, payments,
   crypto, config, supply chain, and AI-generated code smells. Run `ladpock checks` for the list, or see
   [docs/CHECKS.md](docs/CHECKS.md).
 - **A route matrix** for Next.js (App Router, Pages API and server actions), Express, Fastify, Hono, Koa, NestJS,
@@ -48,9 +48,18 @@ CRITICAL (6)
   file-system and shell permissions), the asset protocol and the updater. It also lists every `#[tauri::command]`
   the page can call, with which ones read or write files, whether they check the path is inside an allowed folder,
   and which start programs. Tauri v2 and v1 configs are both supported.
+- **Live checks against your running app.** Point LadPock at your app on this computer (`--live
+  http://localhost:3000`, or the toggle in the dashboard) and it confirms which endpoints really answer without a
+  login, and checks security headers, CORS, exposed `.env`/`.git` files, error pages and sign-in rate limits. It
+  only ever talks to localhost, and only sends requests that change data if you ask.
 - **Live vulnerability data before every run.** Your dependencies are checked against [OSV.dev](https://osv.dev),
   prioritised with CISA's [Known Exploited Vulnerabilities](https://www.cisa.gov/known-exploited-vulnerabilities-catalog)
-  list and [EPSS](https://www.first.org/epss/) exploit likelihood.
+  list and [EPSS](https://www.first.org/epss/) exploit likelihood. Lockfiles and manifests are read for npm, PyPI,
+  Cargo, Go, Composer, RubyGems, NuGet (.csproj, packages.lock.json), Maven/Gradle, pub (Flutter), Swift Package
+  Manager and Hex.
+- **Works inside Claude Code.** `ladpock mcp` lets Claude Code scan while it writes code and check whether its fixes
+  worked, and `ladpock hook install` stops commits that add secrets.
+- **What changed since the last scan:** new and fixed findings and the grade change, on every scan.
 - **"New since you last looked."** LadPock stores each project's dependency inventory. Every time you open it, it
   re-checks all your projects against fresh data and tells you which ones are affected by newly published or
   newly exploited vulnerabilities, without rescanning the code.
@@ -219,9 +228,9 @@ you've scanned before.
 |---|---|
 | `ladpock ui` | Open the dashboard (`--port`, `--no-browser`) |
 | `ladpock full-check [path]` | Everything: a Full scan, then the local AI review (`--all-projects`, `--no-ai`) |
-| `ladpock scan [path]` | Scan a project (`--profile quick\|standard\|full`, `--format text\|json\|sarif`, `-o file`) |
+| `ladpock scan [path]` | Scan a project (`--profile quick\|standard\|full`, `--format text\|json\|sarif`, `-o file`, `--live URL`) |
 | `ladpock` / `ladpock status` | Refresh feeds, show new advisories and your projects' grades |
-| `ladpock routes [path]` | Show the Next.js route matrix |
+| `ladpock routes [path]` | Show the route matrix |
 | `ladpock fix-prompt [path]` | Print a prompt for your AI assistant from the last scan |
 | `ladpock advisories [path]` | List known vulnerable dependencies |
 | `ladpock projects discover <folder>` | Register every project inside a folder |
@@ -229,6 +238,8 @@ you've scanned before.
 | `ladpock ai status\|benchmark\|review\|leads\|nightly\|schedule` | Local AI review (see above) |
 | `ladpock scanners [install\|remove] [name]` | List, install or remove the optional scanners (pinned, checksum-verified) |
 | `ladpock checks` | List every check |
+| `ladpock mcp` | Run as an MCP server for Claude Code and other AI assistants |
+| `ladpock hook install\|remove [path]` | Add or remove a git pre-commit hook that stops commits adding secrets |
 | `ladpock doctor [path]` | Check your setup and optional scanners |
 
 Add `--offline` to any command to skip the network and use cached data. LadPock will tell you how old it is.
@@ -253,6 +264,41 @@ match is deleted.
   for injection.
 
 If you install them yourself instead (for example with a package manager), LadPock uses yours and leaves them alone.
+
+### Live checks against your running app
+
+Start your app, then:
+
+```bash
+ladpock scan . --live http://localhost:3000
+```
+
+LadPock calls every route the route matrix found without logging in, and reports any that answer with data against
+the line of code that defines them. It also checks security headers, CORS, server version banners, files that should
+never be served (`.env`, `.git`, Spring actuator, phpinfo, SQL dumps), stack traces in error pages, and whether 20
+failed sign-ins in a row get slowed down. For the most realistic results, run a production build locally.
+
+It refuses any address that isn't this computer. Routes that change data (POST, PUT, PATCH, DELETE) are skipped
+unless you add `--live-writes`, and even then they get placeholder IDs and empty bodies. Only do that against a
+development database.
+
+### With Claude Code
+
+```bash
+claude mcp add ladpock -- ladpock mcp
+```
+
+This gives Claude Code tools to scan a project (optionally reporting only the files it changed), list the last
+findings, read the route matrix, explain the grade and get a fix prompt. It can scan after it edits auth, data
+access or payment code, and check whether its fix worked, because every scan reports what changed since the
+previous one. The server only reads your projects and LadPock's database.
+
+```bash
+ladpock hook install
+```
+
+This adds a git pre-commit hook that scans the files you're committing and stops the commit if they add a secret. It
+won't replace an existing hook unless you pass `--force`; `ladpock hook remove` takes it out again.
 
 ### In CI
 
@@ -296,6 +342,8 @@ isn't 127.0.0.1 or localhost). What leaves your machine:
 - only if you set up the paid online AI review and switch it on for a scan: parts of your code with secrets masked,
   sent to Anthropic
 
+Live checks only talk to your app on this computer.
+
 Otherwise your code never leaves your machine. Results live in a local SQLite database: `%LOCALAPPDATA%\LadPock` on Windows,
 `~/Library/Application Support/LadPock` on macOS, `~/.local/share/ladpock` on Linux. Set `LADPOCK_HOME` to change
 it. Secrets are masked before anything is stored.
@@ -303,8 +351,8 @@ it. Secrets are masked before anything is stored.
 ## Roadmap
 
 - Paid online scanners with your own account (for example Snyk or Socket)
-- More framework packs: Express, FastAPI, SvelteKit, Remix
-- Safe live probes against your own running app (headers, CORS, rate limits)
+- Route matrices for SvelteKit, Remix, Nuxt, Rails, Laravel, Spring, Go and ASP.NET
+- Live checks that sign in as two test users and try to read each other's data
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the architecture and the decisions behind it.
 

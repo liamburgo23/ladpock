@@ -9,6 +9,7 @@ Generated with `ladpock checks --markdown`.
 |---|---|---|---|
 | `LP-DOCKER-002` | Secret baked into the container image | high | all projects |
 | `LP-INFRA-004` | Kubernetes Secret committed with its values | high | all projects |
+| `LP-LIVE-004` | Private file served to anyone | critical | all projects |
 | `LP-SEC-001` | Supabase admin key exposed to the browser | critical | all projects |
 | `LP-SEC-002` | Secret exposed through a public environment variable | high | all projects |
 | `LP-SEC-003` | Hardcoded credential in the code | critical | all projects |
@@ -34,6 +35,7 @@ Generated with `ladpock checks --markdown`.
 | `LP-AUTH-010` | Sign-in or password endpoint has no rate limit | medium | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django |
 | `LP-AUTH-011` | Token decoded but never verified | high | all projects |
 | `LP-INFRA-003` | Database with a default or empty password | medium | all projects |
+| `LP-LIVE-005` | Sign-in allows unlimited attempts | medium | all projects |
 | `LP-MOB-004` | Login token stored in plain app storage | medium | all projects |
 | `LP-SUPA-004` | Supabase getSession() trusted on the server | medium | supabase |
 
@@ -48,6 +50,7 @@ Generated with `ladpock checks --markdown`.
 | `LP-AUTHZ-005` | Security check written as an assert | low | all projects |
 | `LP-AUTHZ-006` | Login requirement switched off for every route | high | all projects |
 | `LP-ELEC-004` | Whole IPC channel exposed to the web page | high | electron |
+| `LP-LIVE-001` | Endpoint answered without logging in | high | all projects |
 | `LP-MOB-003` | Android component open to other apps | medium | all projects |
 | `LP-SUPA-001` | Supabase table without Row Level Security | high | supabase |
 | `LP-SUPA-002` | Supabase policy lets everyone through | high | supabase |
@@ -129,6 +132,10 @@ Generated with `ladpock checks --markdown`.
 | `LP-ELEC-008` | No Content Security Policy for the app's pages | medium | electron |
 | `LP-INFRA-001` | Container can take over the host | high | all projects |
 | `LP-INFRA-002` | Database or admin port open on every network interface | medium | all projects |
+| `LP-LIVE-002` | Security headers missing from responses | low | all projects |
+| `LP-LIVE-003` | App lets any website read its responses (CORS) | medium | all projects |
+| `LP-LIVE-006` | Error page shows a stack trace | medium | all projects |
+| `LP-LIVE-007` | Server announces its software version | low | all projects |
 | `LP-MOB-001` | App allows unencrypted HTTP traffic | medium | all projects |
 | `LP-MOB-002` | Android app is debuggable or allows data backups | high | all projects |
 | `LP-MOB-005` | WebView with risky settings | medium | all projects |

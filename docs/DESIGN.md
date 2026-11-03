@@ -189,6 +189,38 @@ spelling instead of separate per-language IDs, so a finding means the same thing
 (`ENV X=...`, `export X=...`) are masked too. Format tests build their samples at runtime from a fixed seed, so no
 realistic token is committed.
 
+## Proving it and fitting the workflow (0.9.0)
+
+**Live checks (`probe.py`).** The route matrix is static analysis. `run_probe` asks the running app the same
+questions.
+- **Requests:** calls each matrix route without credentials. Dynamic segments get placeholder values. GET only unless
+  writes are opted into.
+- **Reporting:** a route that answers 2xx with a non-HTML body is reported against the route's file and line. The
+  message says when the code appeared to check the user, because that means a mismatch between code and behaviour.
+- **Other checks:** the home page's headers, CORS and banner; known sensitive paths, judged by content so SPA
+  fallbacks don't count; a 20-request failed-login burst; and stack-trace markers in any response.
+- **Safety:** targets are resolved and must be loopback, and proxy settings are ignored.
+- **Grade:** live findings join the scan and the grade with `source = "live"`.
+
+**Change tracking.** `compare_with_previous` diffs a scan's finding refs against the previous scan. It stores new
+refs, fixed findings (compact), the previous grade, and whether the profile matched in the summary. The CLI,
+dashboard and MCP tool all read it from there.
+
+**MCP server (`integrations.py`).** Newline-delimited JSON-RPC 2.0 over stdio: `initialize` (negotiating
+2024-11-05 to 2025-06-18), `tools/list`, `tools/call` and `ping`. The tools wrap `run_scan`, the stored findings, the
+route matrix, `scoring.explain` and `report.fix_prompt`. Scan progress is never written to stdout, which carries the
+protocol.
+
+**Pre-commit hook.**
+- **What it scans:** `precommit` limits a `FileIndex` to the staged files and runs only the file-local secret
+  checks (plus hidden Unicode). It blocks on high or critical findings.
+- **The hook script:** calls the same Python interpreter with LadPock's source path, so it also works from a
+  source checkout.
+- **Other hook managers:** `core.hooksPath` (husky and similar) is detected and left alone.
+
+**More ecosystems.** NuGet, Maven/Gradle (including version catalogs), pub, SwiftPM and Hex parsers feed the same OSV
+lookup. XML manifests are read with regular expressions rather than an XML parser.
+
 ## Next milestones
 
 1. **Paid online scanners.** Optional integrations with commercial scanners using your own account, behind the same

@@ -68,6 +68,17 @@ follows; a change that breaks one is a security bug.
    last four characters are shown). Spending is recorded per call, and a run stops before it would exceed your
    monthly budget.
 
+12. **Live checks only touch your own computer.** The target must be localhost, 127.0.0.1, ::1 or a *.localhost
+   name that resolves to loopback, proxy settings are ignored, and redirects aren't followed. By default only GET,
+   HEAD and OPTIONS requests are sent (plus a short burst of failed sign-ins with a made-up account). Requests that
+   could change data need an explicit opt-in and use placeholder IDs and empty bodies. Contents of exposed files are
+   masked in the report.
+
+13. **The MCP server and the git hook only read.** `ladpock mcp` talks JSON-RPC over stdin/stdout to the client
+   that started it. Its tools scan, list findings and build fix prompts; none edits code or settings, and results
+   are masked like every other report. `ladpock hook install` writes one pre-commit hook. It refuses to overwrite
+   an existing hook unless told to, keeps a backup, and restores it on removal.
+
 ## Limits
 
 LadPock finds common, recognisable mistakes. It can't prove an application is secure, and it can't see business

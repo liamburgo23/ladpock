@@ -1510,6 +1510,7 @@ const HELP = [
     ["OSV.dev: known vulnerabilities for npm, PyPI, crates.io, Go and more, matched against the exact versions in your lockfiles.",
       "CISA KEV: the US government's list of vulnerabilities attackers are actively using. Anything on it is treated as critical.",
       "EPSS: the estimated chance a vulnerability will be exploited in the next 30 days."],
+    "Dependency versions are read from npm, PyPI, Cargo, Go, Composer, RubyGems, NuGet, Maven/Gradle, pub (Flutter), Swift Package Manager and Hex lockfiles and manifests, without running any package manager.",
     "Because LadPock remembers each project's dependency list, it can tell you when a new vulnerability affects a project you haven't touched. That's the red banner on the home page.",
     "What's sent: package names and versions (to OSV.dev and the npm and PyPI registries) and CVE IDs (to EPSS). Never your code. There's no telemetry.",
   ]],
