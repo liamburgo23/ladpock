@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ladpock"
-version = "0.9.0"
+version = "0.10.0"
 description = "A free, local security checker for vibe-coded projects."
 readme = "README.md"
 license = "Apache-2.0"
@@ -15,9 +15,13 @@ keywords = ["security", "sast", "sca", "vibe-coding", "nextjs", "supabase", "app
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Environment :: Console",
+    "Environment :: Web Environment",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Security",
     "Topic :: Software Development :: Quality Assurance",
 ]
@@ -32,6 +36,8 @@ online-ai = ["anthropic>=1.0"]
 [project.urls]
 Homepage = "https://github.com/liamburgo23/ladpock"
 Issues = "https://github.com/liamburgo23/ladpock/issues"
+Changelog = "https://github.com/liamburgo23/ladpock/blob/main/CHANGELOG.md"
+Security = "https://github.com/liamburgo23/ladpock/blob/main/SECURITY.md"
 
 [project.scripts]
 ladpock = "ladpock.cli:main"

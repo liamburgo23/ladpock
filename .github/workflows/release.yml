@@ -1,0 +1,51 @@
+name: release
+
+# Push a tag like v0.10.0 to test, build and draft a GitHub release. Nothing is
+# published: you review the draft and publish it yourself. Publishing to PyPI is
+# a separate workflow (publish.yml) that runs when the release is published.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  draft:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # to create the draft release
+    steps:
+      # Pinned to commit SHAs on purpose: tags can be moved (see LP-SUP-002).
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+      - name: Check the tag matches the package version
+        run: |
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])")
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "Tag $GITHUB_REF_NAME doesn't match pyproject.toml version $version"; exit 1
+          fi
+          grep -q "^## \[$version\]" CHANGELOG.md || { echo "CHANGELOG.md has no entry for $version"; exit 1; }
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+      - name: Tests
+        env:
+          PYTHONPATH: src:tests
+        run: python -m unittest discover -s tests
+      - name: Build
+        run: |
+          python -m pip install build==1.3.0 setuptools==79.0.1
+          python -m build --no-isolation
+      - name: Check the installed package works
+        run: python scripts/check_package.py dist/*.whl
+      - name: Draft the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          awk -v v="$VERSION" 'index($0, "## [" v "]") == 1 {on = 1; next} /^## \[/ {on = 0} on' CHANGELOG.md > notes.md
+          gh release create "$GITHUB_REF_NAME" dist/* --repo "$GITHUB_REPOSITORY" --draft \
+            --title "LadPock $VERSION" --notes-file notes.md

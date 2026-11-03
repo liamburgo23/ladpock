@@ -221,6 +221,26 @@ protocol.
 **More ecosystems.** NuGet, Maven/Gradle (including version catalogs), pub, SwiftPM and Hex parsers feed the same OSV
 lookup. XML manifests are read with regular expressions rather than an XML parser.
 
+## Packaging and releases (0.10.0)
+
+LadPock ships as a pure-Python wheel with one console script. `scripts/check_package.py` installs a built wheel
+into a fresh virtual environment with `PYTHONPATH` cleared. It then runs `--version`, `checks`, a scan that must
+find a planted key without printing it, an MCP handshake, and checks for the dashboard files, rules and scanner
+pins. CI runs it on Linux and Windows for every push.
+
+Releasing takes three deliberate steps:
+1. **Tag.** Bump the version in `pyproject.toml` and `__init__.py`, add a CHANGELOG section, then push a `vX.Y.Z`
+   tag.
+2. **Draft.** `release.yml` checks that the tag, version and changelog agree, runs the tests, builds with pinned
+   `build` and `setuptools`, runs the package check, and creates a *draft* GitHub release with the built files and
+   that version's changelog notes.
+3. **Publish.** Publishing the draft triggers `publish.yml`. It uploads those exact files to PyPI with trusted
+   publishing (no stored token), but only when the repository variable `PUBLISH_TO_PYPI` is `true` and the `pypi`
+   environment allows it.
+
+`ladpock shortcut` writes a launcher that runs `ladpock ui` in a terminal: a Windows `.lnk` (through PowerShell's
+WScript.Shell), a macOS `.command` or a Linux `.desktop` entry.
+
 ## Next milestones
 
 1. **Paid online scanners.** Optional integrations with commercial scanners using your own account, behind the same

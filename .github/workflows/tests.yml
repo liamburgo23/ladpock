@@ -33,3 +33,26 @@ jobs:
         env:
           PYTHONPATH: src
         run: python -m ladpock scan . --offline --no-external --fail-on high
+
+  package:
+    # Build the wheel and check the installed command works, so a missing file or
+    # entry point is caught here rather than after a release.
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13"
+      - name: Build
+        shell: bash
+        run: |
+          python -m pip install build==1.3.0 setuptools==79.0.1
+          python -m build --no-isolation
+      - name: Install the wheel in a clean environment and try it
+        shell: bash
+        run: python scripts/check_package.py dist/*.whl

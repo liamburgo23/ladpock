@@ -1,0 +1,33 @@
+name: publish to PyPI
+
+# Runs when you publish a GitHub release (drafted by release.yml), and only if
+# the repository variable PUBLISH_TO_PYPI is "true". It uploads the exact files
+# attached to the release using PyPI trusted publishing, so no PyPI token is
+# stored in GitHub. Setup: create the "ladpock" project on PyPI with a trusted
+# publisher for this repository, workflow publish.yml and environment "pypi".
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+jobs:
+  pypi:
+    if: vars.PUBLISH_TO_PYPI == 'true'
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write  # trusted publishing
+    steps:
+      - name: Download the files attached to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release download "${{ github.event.release.tag_name }}" --repo "$GITHUB_REPOSITORY" --dir dist \
+            --pattern '*.whl' --pattern '*.tar.gz'
+          ls -l dist
+      # Pinned to a commit SHA on purpose: tags can be moved (see LP-SUP-002).
+      - uses: pypa/gh-action-pypi-publish@7245906fb61fa33a13554f9d5fb856fe61758086 # v1.14.3

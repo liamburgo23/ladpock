@@ -72,19 +72,29 @@ CRITICAL (6)
 
 ## Install
 
-LadPock needs Python 3.11 or newer and has no other dependencies.
+LadPock needs Python 3.11 or newer and has no other dependencies. [pipx](https://pipx.pypa.io) installs it in
+its own environment and puts the `ladpock` command on your PATH:
 
 ```bash
 pipx install git+https://github.com/liamburgo23/ladpock
 ```
 
-Or from a clone:
+Or from a clone (use `pip install -e .` instead if you want to change the code):
 
 ```bash
 git clone https://github.com/liamburgo23/ladpock
 cd ladpock
 pip install .
 ```
+
+Then add a launcher, so you can open the dashboard from the Start Menu, Applications or your app menu:
+
+```bash
+ladpock shortcut
+```
+
+It opens the dashboard in a terminal window. Close that window to stop LadPock. Add `--desktop` for a desktop icon
+too, and `ladpock shortcut remove` takes them away.
 
 ## Use
 
@@ -238,6 +248,8 @@ you've scanned before.
 | `ladpock ai status\|benchmark\|review\|leads\|nightly\|schedule` | Local AI review (see above) |
 | `ladpock scanners [install\|remove] [name]` | List, install or remove the optional scanners (pinned, checksum-verified) |
 | `ladpock checks` | List every check |
+| `ladpock shortcut [remove] [--desktop]` | Add or remove a launcher for the dashboard |
+| `ladpock --version` | Show the installed version |
 | `ladpock mcp` | Run as an MCP server for Claude Code and other AI assistants |
 | `ladpock hook install\|remove [path]` | Add or remove a git pre-commit hook that stops commits adding secrets |
 | `ladpock doctor [path]` | Check your setup and optional scanners |
