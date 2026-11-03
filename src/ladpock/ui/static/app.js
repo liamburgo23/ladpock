@@ -591,7 +591,8 @@ async function renderProject(id, tab, view, sub) {
 
 // ---------- scan panel: every option is a toggle, then one Scan button ----------
 
-const DEFAULT_OPTIONS = { profile: "standard", online: true, scanners: true, history: false, local_ai: false, online_ai: false };
+const DEFAULT_OPTIONS = { profile: "standard", online: true, scanners: true, history: false, local_ai: false, online_ai: false,
+  live: false, live_writes: false };
 const OPTION_KEYS = Object.keys(DEFAULT_OPTIONS);
 const PRESETS = [
   ["Everything free", "Full scan, live vulnerability data, installed scanners, git history and the local AI review.",
@@ -607,7 +608,7 @@ const PRESETS = [
 function savedOptions(projectId) {
   try {
     const saved = JSON.parse(load(`ladpock-scan-${projectId}`) || "null");
-    if (saved && OPTION_KEYS.every((k) => k in saved)) return { ...DEFAULT_OPTIONS, ...saved };
+    if (saved && typeof saved === "object") return { ...DEFAULT_OPTIONS, ...saved };
   } catch (e) { /* use the default */ }
   return { ...DEFAULT_OPTIONS };
 }
@@ -651,8 +652,10 @@ function scanPanel(p, data) {
       if (!(o.key.stored || o.key.env)) return "Add your Anthropic API key in AI settings.";
     }
     if (key === "online_tools") return "Not available yet.";
+    if (key === "live_writes" && !opts.live) return "Turn on live checks first.";
     return null;
   };
+  let liveUrl = load(`ladpock-live-${p.id}`) || "http://localhost:3000";
   const effective = () => Object.fromEntries(OPTION_KEYS.map((k) => [k, k === "profile" ? opts.profile : Boolean(opts[k]) && !blocked(k)]));
   const tag = (text, kind) => h("span", { class: `tag ${kind}` }, text);
 
@@ -690,6 +693,21 @@ function scanPanel(p, data) {
       : "Nothing has changed since its last review, so this would cost nothing."];
   };
 
+  const liveHelp = () => {
+    const base = "Calls your app running on this computer without logging in, to confirm which endpoints really answer, and "
+      + "checks security headers, CORS, exposed files like .env and sign-in rate limits. Only ever talks to localhost.";
+    if (!opts.live) return base;
+    const field = h("input", { type: "url", class: "field", value: liveUrl, "aria-label": "Address of your running app",
+      placeholder: "http://localhost:3000", style: "max-width:260px;margin-top:6px" });
+    field.addEventListener("input", () => { liveUrl = field.value.trim(); store(`ladpock-live-${p.id}`, liveUrl); });
+    const writes = h("input", { type: "checkbox", id: "opt-live_writes", checked: opts.live_writes || null });
+    writes.addEventListener("change", () => { opts.live_writes = writes.checked; drawSummary(effective()); });
+    return [base, h("div", { class: "form-inline" }, h("span", null, "App address"), field),
+      h("label", { class: "option", for: writes.id, style: "border:none;padding:4px 0" }, writes,
+        h("span", null, "Also call routes that change data (POST, PUT, DELETE)", h("br"),
+          h("span", { class: "faint" }, "Uses placeholder IDs and empty bodies. Only do this against a development database.")))];
+  };
+
   const drawSummary = (eff) => {
     const profile = data.profiles[eff.profile];
     const will = [`${PROFILE_INFO[eff.profile].label} scan: ${profile.checks} built-in checks that apply to this project`,
@@ -699,6 +717,7 @@ function scanPanel(p, data) {
     if (eff.history) will.push("Search git history for deleted secrets");
     if (eff.local_ai) will.push("Local AI review");
     if (eff.online_ai) will.push("Paid online AI review with Claude");
+    if (eff.live) will.push(`Live checks against ${liveUrl}${eff.live_writes ? ", including routes that change data" : ""}`);
     const leaves = [];
     if (eff.online) leaves.push("Package names and versions, to OSV.dev, npm and PyPI. CVE IDs, to EPSS.");
     if (eff.online_ai) leaves.push("Your code with secrets masked, to Anthropic.");
@@ -706,6 +725,7 @@ function scanPanel(p, data) {
     const time = [PROFILE_INFO[eff.profile].time];
     if (eff.local_ai) time.push("plus the local AI review: minutes, longer the first time");
     if (eff.online_ai) time.push("plus a few seconds per part for the online review");
+    if (eff.live) time.push("plus up to a minute of live checks");
     summary.replaceChildren(
       h("div", null, h("h3", null, "This scan will"), h("ul", null, will.map((w) => h("li", null, w)))),
       h("div", null, h("h3", null, "What leaves your computer"),
@@ -717,7 +737,7 @@ function scanPanel(p, data) {
   const draw = () => {
     const focused = document.activeElement && document.activeElement.id;
     presets.replaceChildren(...PRESETS.map(([label, about, values]) => {
-      const pressed = OPTION_KEYS.every((k) => values[k] === opts[k]);
+      const pressed = Object.keys(values).every((k) => values[k] === opts[k]);
       return h("button", { type: "button", class: "preset", "aria-pressed": pressed ? "true" : "false", title: about,
         onclick: () => { Object.assign(opts, values); draw(); } }, h("strong", null, label), h("span", { class: "faint" }, about));
     }));
@@ -732,6 +752,7 @@ function scanPanel(p, data) {
         "Finds keys that were committed and later deleted: they're still in history. Slower."),
       row("local_ai", "Local AI review", [tag("Free", "free"), tag("this computer", "where")], localHelp()),
       row("online_ai", "Paid online AI review (Claude)", [tag("Paid", "paid"), tag("sends code", "where")], onlineHelp()),
+      row("live", "Live checks against your running app", [tag("Free", "free"), tag("this computer", "where")], liveHelp()),
       row("online_tools", "Paid online scanners", [tag("Paid", "paid"), tag("online", "where")],
         "Commercial services such as Snyk or Socket, using your own account."));
     drawSummary(effective());
@@ -749,7 +770,7 @@ function scanPanel(p, data) {
         + "budget left, and the review stops before going over it.");
       if (!ok) return;
     }
-    startTask(`/api/projects/${p.id}/run`, eff);
+    startTask(`/api/projects/${p.id}/run`, { ...eff, live_url: eff.live ? liveUrl : undefined });
   };
 
   api("GET", "/api/scanners").then((s) => {
@@ -1426,6 +1447,7 @@ const HELP = [
       "Search git history: finds secrets that were committed and later deleted. Needs Gitleaks.",
       "Local AI review: a model on this computer reads your code for logic bugs. Free and private, but needs Ollama.",
       "Paid online AI review: Claude reads your code with secrets masked. Billed to your own Anthropic account, within a monthly budget you set.",
+      "Live checks against your running app: LadPock calls your app on this computer (never anywhere else) without logging in, to confirm which endpoints really answer, and checks headers, CORS, exposed files like .env and .git, error pages and sign-in rate limits. Requests that change data are only sent if you also tick that option, so use a development database for it. For the most realistic results, run a production build locally.",
       "Paid online scanners: commercial services with your own account. Not available yet."],
     "A greyed-out toggle says why it can't be used right now, for example a missing scanner or no API key. Your choices are remembered for each project.",
   ]],

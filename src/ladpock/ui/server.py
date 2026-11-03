@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, urlsplit
 
-from .. import __version__, advisories, report, scoring, tauri
+from .. import __version__, advisories, probe, report, scoring, tauri
 from ..ai import keys as ai_keys
 from ..ai import online as ai_online
 from ..ai import review as ai_review
@@ -190,13 +190,19 @@ def _scan_result(result) -> dict:
 def run_options(body: dict, **defaults) -> dict:
     """The scan panel's choices. Each one is a separate toggle so you decide what runs and what leaves your computer."""
     merged = {"profile": "standard", "online": True, "scanners": True, "history": None, "local_ai": False,
-              "online_ai": False, **defaults}
+              "online_ai": False, "live": False, "live_writes": False, **defaults}
     profile = body.get("profile", merged["profile"])
     if profile not in PROFILES:
         raise ApiError(400, "Unknown profile")
     options = {"profile": profile}
-    for key in ("online", "scanners", "local_ai", "online_ai"):
+    for key in ("online", "scanners", "local_ai", "online_ai", "live", "live_writes"):
         options[key] = _bool(body, key, merged[key])
+    options["live_url"] = None
+    if options["live"]:
+        try:
+            options["live_url"] = probe.check_target(str(body.get("live_url") or "http://localhost:3000"))
+        except probe.ProbeError as exc:
+            raise ApiError(400, str(exc)) from exc
     history = body.get("history", merged["history"])
     options["history"] = PROFILES[profile]["history"] if history is None else _bool(body, "history", history)
     if options["online_ai"] and not options["online"]:
@@ -206,7 +212,8 @@ def run_options(body: dict, **defaults) -> dict:
 
 
 def run_steps(options: dict) -> list[str]:
-    return (list(SCAN_STEPS) + (["Local AI review"] if options["local_ai"] else [])
+    scan = list(SCAN_STEPS[:-1]) + (["Live checks"] if options.get("live") else []) + [SCAN_STEPS[-1]]
+    return (scan + (["Local AI review"] if options["local_ai"] else [])
             + (["Online AI review"] if options["online_ai"] else []))
 
 
@@ -221,7 +228,8 @@ def run_project(db: DB, job: Job, project_id: int, options: dict, prefix: str = 
     label = (lambda name: f"{prefix}{name}") if prefix else (lambda name: name)
     result = run_scan(row["path"], db, profile=options["profile"], offline=not options["online"],
                       external=options["scanners"], history=options["history"], log=job.log.append,
-                      step=lambda name: job.enter(label(name)))
+                      step=lambda name: job.enter(label(name)), live_url=options.get("live_url"),
+                      live_writes=options.get("live_writes", False), should_stop=job.stop.is_set)
     out = {"project_id": project_id, "name": row["name"], **_scan_result(result)}
 
     def progress(done: int, total: int) -> None:
@@ -384,6 +392,14 @@ def assessment_payload(db: DB, project_id: int, scan, findings: list[dict], summ
                                 "against known vulnerabilities.",
                       "fix": "Commit your lockfile (package-lock.json, pnpm-lock.yaml, poetry.lock, Cargo.lock ...)",
                       "href": None})
+    live = summary.get("live") or {}
+    if not live or live.get("error"):
+        gaps_.append({"id": "live", "title": "Only the code was checked, not the running app" if not live
+                      else "Live checks couldn't reach your app",
+                      "detail": "Live checks call your app on this computer without logging in, to confirm which "
+                                "endpoints really answer, and check headers, CORS and exposed files."
+                                + (f" Last attempt: {live['error']}" if live.get("error") else ""),
+                      "fix": "Start your app, then scan with Live checks on", "href": f"#/project/{project_id}"})
     used = summary.get("options") or {}
     if used.get("scanners") is False and scan["profile"] != "quick":
         gaps_.append({"id": "scanners-off", "title": "Installed scanners were turned off for the last scan",

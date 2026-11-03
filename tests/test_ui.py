@@ -203,6 +203,9 @@ class DashboardServer(unittest.TestCase):
             refused = self.api("POST", f"/api/projects/{pid}/run", {"online": False, "online_ai": True})
             self.assertEqual(refused[0], 400)  # the online AI can't run offline, so say so before starting
             self.assertEqual(self.api("POST", f"/api/projects/{pid}/run", {"profile": "huge"})[0], 400)
+            elsewhere = self.api("POST", f"/api/projects/{pid}/run", {"live": True, "live_url": "https://example.com"})
+            self.assertEqual(elsewhere[0], 400)  # live checks only ever run against this computer
+            self.assertIn("localhost", elsewhere[1]["error"])
 
             status, started = self.api("POST", f"/api/projects/{pid}/run",
                                        {"profile": "standard", "online": False, "scanners": False})

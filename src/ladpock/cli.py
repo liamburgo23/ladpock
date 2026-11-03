@@ -46,7 +46,7 @@ def cmd_status(args, db: DB) -> int:
 
 def cmd_scan(args, db: DB) -> int:
     result = run_scan(args.path, db, profile=args.profile, offline=args.offline, external=not args.no_external,
-                      history=True if args.history else None)
+                      history=True if args.history else None, live_url=args.live, live_writes=args.live_writes)
     if args.format == "json":
         _emit(json.dumps(result.to_dict(), indent=2), args.output)
     elif args.format == "sarif":
@@ -321,6 +321,10 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--no-external", action="store_true", help="only run LadPock's built-in checks")
     scan.add_argument("--history", action="store_true", help="also search git history for secrets (needs gitleaks)")
     scan.add_argument("--human", action="store_true", help="show the 'needs a human' checklist")
+    scan.add_argument("--live", metavar="URL",
+                      help="also check your app running on this computer, e.g. http://localhost:3000 (localhost only)")
+    scan.add_argument("--live-writes", action="store_true",
+                      help="with --live, also call POST/PUT/PATCH/DELETE routes (use a development database)")
     scan.add_argument("--fail-on", choices=[s.label for s in Severity if s > Severity.INFO],
                       help="exit with code 1 if anything at or above this severity is found (for CI)")
 

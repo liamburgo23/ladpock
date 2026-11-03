@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import advisories, inventory, scoring
+from . import advisories, inventory, probe, scoring
 from .checks import REGISTRY, ScanContext, inline_ignored, run_all
 from .db import DB
 from .feeds import epss, kev, registry
@@ -169,7 +169,8 @@ def _dedupe(findings: list[Finding]) -> list[Finding]:
 
 def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bool = False,
              external: bool = True, history: bool | None = None, log: Callable[[str], None] = _log,
-             step: Callable[[str], None] = lambda _name: None) -> ScanResult:
+             step: Callable[[str], None] = lambda _name: None, live_url: str | None = None,
+             live_writes: bool = False, should_stop: Callable[[], bool] = lambda: False) -> ScanResult:
     """Scan a project. ``step`` is called with each name in SCAN_STEPS as the scan reaches it."""
     root = Path(path).resolve()
     if not root.is_dir():
@@ -248,6 +249,18 @@ def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bo
                 findings.append(ctx.finding(info, src, None, f"{name} ({eco})", confidence="high",
                                             message=f"'{name}' isn't on the public {eco} registry. {info.why}"))
 
+    live = None
+    if live_url:
+        step("Live checks")
+        try:
+            probed = probe.run_probe(live_url, ctx.routes, include_writes=live_writes, log=log, should_stop=should_stop)
+            findings.extend(probed.findings)
+            live = {"url": probed.base, "requests": probed.requests, "routes": probed.checked_routes,
+                    "confirmed": len(probed.findings), "skipped_writes": probed.skipped_writes, "notes": probed.notes}
+        except probe.ProbeError as exc:
+            errors.append(f"Live checks: {exc}")
+            live = {"url": live_url, "error": str(exc)}
+
     step(SCAN_STEPS[5])
     findings = _dedupe(findings)
     suppressions = db.active_suppressions(project_id)
@@ -271,6 +284,7 @@ def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bo
         "feeds": [vars(f) for f in feeds],
         "scanners": [{"name": s.name, "available": s.available, "ran": s.ran, "error": s.error} for s in scanners],
         "errors": errors[:20],
+        "live": live,
         "options": {"offline": offline, "scanners": bool(external and settings["scanners"]),
                     "history": bool(external and settings["scanners"]
                                     and (history if history is not None else settings["history"]))},

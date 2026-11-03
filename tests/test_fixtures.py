@@ -54,7 +54,7 @@ EXPECTED_APPS = {
 }
 EXPECTED_POLYGLOT = {"LP-AUTHZ-006", "LP-CFG-007", "LP-CFG-008", "LP-ABUSE-005"}
 # Produced only with network access or git, covered by their own tests.
-NOT_IN_OFFLINE_FIXTURE = {"LP-SEC-004", "LP-DEP-001", "LP-SUP-005"}
+NOT_IN_OFFLINE_FIXTURE = {"LP-SEC-004", "LP-DEP-001", "LP-SUP-005"} | {f"LP-LIVE-00{i}" for i in range(1, 8)}  # live: test_probe
 
 
 def _context(root: Path) -> ScanContext:
