@@ -152,6 +152,151 @@ def parse_go_mod(text: str, src: str) -> list[Component]:
     return out
 
 
+# .NET, Java and other ecosystems. XML files are read with regular expressions rather than an XML parser, so a
+# crafted project file can't use entity tricks against the scanner.
+_EXACT = re.compile(r"^\d+(?:\.\d+)*(?:[-+][0-9A-Za-z.-]+)?$")
+_XML_ATTR = r"\b{name}\s*=\s*\"([^\"]*)\""
+
+
+def _attr(tag: str, name: str) -> str | None:
+    match = re.search(_XML_ATTR.format(name=name), tag, re.I)
+    return match.group(1).strip() if match else None
+
+
+def parse_nuget_lock(text: str, src: str) -> list[Component]:
+    data = json.loads(text)
+    out: list[Component] = []
+    for packages in (data.get("dependencies") or {}).values():
+        for name, meta in (packages or {}).items():
+            version = (meta or {}).get("resolved")
+            if version and (meta or {}).get("type") != "Project":
+                out.append(Component("NuGet", name, str(version), src))
+    return out
+
+
+def parse_msbuild(text: str, src: str) -> list[Component]:
+    """PackageReference / PackageVersion items in .csproj, Directory.Packages.props, and old packages.config files."""
+    out: list[Component] = []
+    for match in re.finditer(r"<(PackageReference|PackageVersion|package)\b([^>]*?)(/>|>(.*?)</\1>)", text, re.S | re.I):
+        tag, inner = match.group(2), match.group(4) or ""
+        name = _attr(tag, "Include") or _attr(tag, "id") or _attr(tag, "Update")
+        version = _attr(tag, "Version") or _attr(tag, "version")
+        if not version:
+            child = re.search(r"<Version>\s*([^<\s]+)\s*</Version>", inner, re.I)
+            version = child.group(1) if child else None
+        if name and version and _EXACT.match(version.strip("[]")):
+            out.append(Component("NuGet", name, version.strip("[]"), src))
+    return out
+
+
+def parse_pom(text: str, src: str) -> list[Component]:
+    text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
+    properties = {}
+    block = re.search(r"<properties>(.*?)</properties>", text, re.S)
+    if block:
+        properties = {m.group(1): m.group(2).strip() for m in re.finditer(r"<([\w.-]+)>\s*([^<]+?)\s*</\1>", block.group(1))}
+    out: list[Component] = []
+    for dep in re.finditer(r"<(dependency|plugin)>(.*?)</\1>", text, re.S):
+        body = dep.group(2)
+        group = re.search(r"<groupId>\s*([^<\s]+)\s*</groupId>", body)
+        artifact = re.search(r"<artifactId>\s*([^<\s]+)\s*</artifactId>", body)
+        version = re.search(r"<version>\s*([^<\s]+)\s*</version>", body)
+        if not (group and artifact and version):
+            continue  # version managed by a parent or BOM: unknown here
+        value = version.group(1)
+        prop = re.fullmatch(r"\$\{([\w.-]+)\}", value)
+        if prop:
+            value = properties.get(prop.group(1), "")
+        if _EXACT.match(value):
+            out.append(Component("Maven", f"{group.group(1)}:{artifact.group(1)}", value, src))
+    return out
+
+
+def parse_gradle_lock(text: str, src: str) -> list[Component]:
+    out: list[Component] = []
+    for line in text.splitlines():
+        match = re.match(r"^([\w.-]+):([\w.-]+):([\w.+-]+)=", line.strip())
+        if match:
+            out.append(Component("Maven", f"{match.group(1)}:{match.group(2)}", match.group(3), src))
+    return out
+
+
+def parse_gradle_build(text: str, src: str) -> list[Component]:
+    """Dependencies declared with an exact version in build.gradle(.kts)."""
+    pattern = re.compile(r"\b(?:implementation|api|compileOnly|runtimeOnly|kapt|ksp|annotationProcessor|classpath|"
+                         r"testImplementation)\s*\(?\s*['\"]([\w.-]+):([\w.-]+):([\w.+-]+)['\"]")
+    return [Component("Maven", f"{m.group(1)}:{m.group(2)}", m.group(3), src)
+            for m in pattern.finditer(text) if _EXACT.match(m.group(3))]
+
+
+def parse_version_catalog(text: str, src: str) -> list[Component]:
+    """Gradle version catalogs (gradle/libs.versions.toml)."""
+    data = tomllib.loads(text)
+    versions = {k: v for k, v in (data.get("versions") or {}).items() if isinstance(v, str)}
+    out: list[Component] = []
+    for lib in (data.get("libraries") or {}).values():
+        if isinstance(lib, str):
+            parts = lib.split(":")
+            if len(parts) == 3 and _EXACT.match(parts[2]):
+                out.append(Component("Maven", f"{parts[0]}:{parts[1]}", parts[2], src))
+            continue
+        if not isinstance(lib, dict):
+            continue
+        module = lib.get("module") or (f"{lib['group']}:{lib['name']}" if lib.get("group") and lib.get("name") else None)
+        version = lib.get("version")
+        if isinstance(version, dict):
+            version = versions.get(version.get("ref", "")) or version.get("strictly") or version.get("require")
+        if module and isinstance(version, str) and _EXACT.match(version):
+            out.append(Component("Maven", module, version, src))
+    return out
+
+
+def parse_pubspec_lock(text: str, src: str) -> list[Component]:
+    out: list[Component] = []
+    name = source = version = None
+
+    def flush() -> None:
+        if name and version and source == "hosted":
+            out.append(Component("Pub", name, version, src))
+
+    for line in text.splitlines():
+        top = re.match(r"^  ([\w-]+):\s*$", line)
+        if top:
+            flush()
+            name, source, version = top.group(1), None, None
+            continue
+        if re.match(r"^\S", line):
+            flush()
+            name = None
+            continue
+        field = re.match(r"^    (source|version):\s*\"?([^\"\s]+)\"?\s*$", line)
+        if field and name:
+            if field.group(1) == "source":
+                source = field.group(2)
+            else:
+                version = field.group(2)
+    flush()
+    return out
+
+
+def parse_swift_resolved(text: str, src: str) -> list[Component]:
+    data = json.loads(text)
+    pins = data.get("pins") or (data.get("object") or {}).get("pins") or []
+    out: list[Component] = []
+    for pin in pins:
+        url = pin.get("location") or pin.get("repositoryURL") or ""
+        version = (pin.get("state") or {}).get("version")
+        name = re.sub(r"^(?:https?://|git@)|\.git$", "", url).replace(":", "/")
+        if name and version:
+            out.append(Component("SwiftURL", name, version, src))
+    return out
+
+
+def parse_mix_lock(text: str, src: str) -> list[Component]:
+    return [Component("Hex", m.group(1), m.group(2), src)
+            for m in re.finditer(r"\"[\w-]+\":\s*\{:hex,\s*:([\w-]+),\s*\"([^\"]+)\"", text)]
+
+
 PARSERS: dict[str, Callable[[str, str], list[Component]]] = {
     "package-lock.json": parse_npm_lock,
     "npm-shrinkwrap.json": parse_npm_lock,
@@ -165,6 +310,17 @@ PARSERS: dict[str, Callable[[str, str], list[Component]]] = {
     "composer.lock": parse_composer_lock,
     "Gemfile.lock": parse_gemfile_lock,
     "go.mod": parse_go_mod,
+    "packages.lock.json": parse_nuget_lock,
+    "packages.config": parse_msbuild,
+    "Directory.Packages.props": parse_msbuild,
+    "pom.xml": parse_pom,
+    "gradle.lockfile": parse_gradle_lock,
+    "build.gradle": parse_gradle_build,
+    "build.gradle.kts": parse_gradle_build,
+    "libs.versions.toml": parse_version_catalog,
+    "pubspec.lock": parse_pubspec_lock,
+    "Package.resolved": parse_swift_resolved,
+    "mix.lock": parse_mix_lock,
 }
 
 
@@ -173,6 +329,8 @@ def parser_for(name: str) -> Callable[[str, str], list[Component]] | None:
         return PARSERS[name]
     if name.startswith("requirements") and name.endswith(".txt"):
         return parse_requirements
+    if name.endswith((".csproj", ".fsproj", ".vbproj")):
+        return parse_msbuild
     return None
 
 

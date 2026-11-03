@@ -31,7 +31,7 @@ TEXT_EXT = CODE_EXT | CONFIG_EXT | {
     ".ejs", ".hbs", ".handlebars", ".pug", ".jade", ".njk", ".jinja", ".jinja2", ".j2", ".twig", ".erb", ".liquid",
     ".mustache",
     # infrastructure and platform config
-    ".plist", ".gradle", ".kts", ".tfvars", ".csproj", ".config", ".env", ".tfstate",
+    ".plist", ".gradle", ".kts", ".tfvars", ".csproj", ".config", ".env", ".tfstate", ".props", ".fsproj", ".vbproj",
 }
 TEXT_NAMES = {
     "Dockerfile", ".gitignore", ".npmrc", ".yarnrc", ".cursorrules", ".windsurfrules", "Procfile",
@@ -40,6 +40,7 @@ TEXT_NAMES = {
 LOCKFILES = {
     "package-lock.json", "npm-shrinkwrap.json", "yarn.lock", "pnpm-lock.yaml", "bun.lock",
     "poetry.lock", "uv.lock", "Pipfile.lock", "Cargo.lock", "composer.lock", "Gemfile.lock", "go.sum",
+    "packages.lock.json", "gradle.lockfile", "pubspec.lock", "Package.resolved", "mix.lock", "Podfile.lock",
 }
 AI_INSTRUCTION_NAMES = {
     "claude.md", "agents.md", "gemini.md", ".cursorrules", ".windsurfrules", "copilot-instructions.md",
