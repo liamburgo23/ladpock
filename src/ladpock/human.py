@@ -14,6 +14,19 @@ CHECKLIST: list[tuple[str, str, tuple[str, ...]]] = [
     ("H-09", "Firebase rules were tested with the Rules Playground or emulator for logged-out and other-user access.", ("firebase",)),
     ("H-10", "Stripe is in live mode only in production, and the webhook secret is different per environment.", ("stripe",)),
     ("H-11", "You logged in as user A and tried to open user B's pages and API URLs (the most common real bug).", ()),
+    ("H-12", "The production database, cache and admin panels can't be reached from the internet (only from your app or a VPN).",
+     ("docker", "kubernetes", "terraform")),
+    ("H-13", "Cloud accounts have billing alerts, and nobody uses the root account or a long-lived admin key day to day.",
+     ("terraform", "kubernetes")),
+    ("H-14", "Container images are rebuilt regularly so base-image security fixes actually reach production.",
+     ("docker", "kubernetes")),
+    ("H-15", "Release builds are signed, debugging is off, and you tested the app with the phone's network going through a "
+             "proxy to see what it sends.", ("android", "ios", "react-native", "expo", "flutter")),
+    ("H-16", "Desktop app updates are signed and delivered over HTTPS, and you know how you'd ship an urgent security fix.",
+     ("electron", "tauri")),
+    ("H-17", "Your API checks every request itself, because anyone can call it directly without your app or website.",
+     ("express", "fastify", "hono", "koa", "nestjs", "fastapi", "flask", "django", "android", "ios", "react-native",
+      "expo", "flutter")),
 ]
 
 

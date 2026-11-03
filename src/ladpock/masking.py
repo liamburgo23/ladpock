@@ -89,6 +89,12 @@ _ENV_ASSIGNMENT = re.compile(
     r"(?m)^(\s*(?:export\s+|ENV\s+|ARG\s+|-\s*)?[A-Z][A-Z0-9_]*(?:PASSWORD|PASSWD|SECRET|TOKEN|API_KEY|APIKEY|PRIVATE_KEY|"
     r"ACCESS_KEY)[A-Z0-9_]*\s*=\s*)([^\s'\"$]{6,})"
 )
+# Unquoted YAML values under a secret-looking key (Kubernetes Secrets, Compose, CI). Values that look like code
+# (z.string(), process.env.X, req.body.password) are left alone so code snippets stay readable.
+_YAML_SECRET = re.compile(
+    r"(?im)^(\s*-?\s*[\w.-]*(?:password|passwd|secret|token|api_?key|private_?key|access_?key|credentials?)[\w.-]*\s*:\s*)"
+    r"(?![a-z_$][\w$]*\s*[.(\[])(?!(?:true|false|null|yes|no)\s*$)([^\s'\"#{(\$][^'\"\n#(]{5,})$"
+)
 LOCAL_DB_HOSTS = {"localhost", "127.0.0.1", "0.0.0.0", "db", "postgres", "mysql", "redis", "mongo", "host.docker.internal"}
 
 
@@ -132,4 +138,5 @@ def redact(text: str) -> str:
         text,
     )
     text = _ENV_ASSIGNMENT.sub(lambda m: m.group(0) if "****" in m.group(2) else m.group(1) + mask(m.group(2)), text)
+    text = _YAML_SECRET.sub(lambda m: m.group(0) if "****" in m.group(2) else m.group(1) + mask(m.group(2).strip()), text)
     return text

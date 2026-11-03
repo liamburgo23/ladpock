@@ -163,7 +163,7 @@ class ServerFixtures(unittest.TestCase):
         findings, routes = self.findings("vuln-node-api")
         self.assertEqual(sorted(EXPECTED_NODE - {f.check_id for f in findings}), [])
         self.assertEqual(routes[("express", "POST", "/api/users")].auth, "no")
-        self.assertEqual(routes[("express", "GET", "/:id")].auth, "mw")  # router.use(checkJwt)
+        self.assertEqual(routes[("express", "GET", "/api/orders/:id")].auth, "mw")  # mounted at /api/orders, router.use(checkJwt)
         self.assertEqual((routes[("express", "DELETE", "/api/posts/:id")].auth,
                           routes[("express", "DELETE", "/api/posts/:id")].owner), ("yes", "no"))
         self.assertTrue(routes[("express", "POST", "/api/ai/summarise")].paid_api)
@@ -180,7 +180,7 @@ class ServerFixtures(unittest.TestCase):
         self.assertFalse(routes[("flask", "GET", "/hello")].paid_api)  # same module, but this route doesn't call OpenAI
         self.assertEqual(routes[("fastapi", "POST", "/items")].validation, "no")
         self.assertEqual(routes[("fastapi", "GET", "/users/{user_id}")].auth, "yes")
-        self.assertEqual(routes[("django", "ANY", "/invoices/")].auth, "no")  # ModelViewSet without permission_classes
+        self.assertEqual(routes[("django", "ANY", "/shop/api/invoices/")].auth, "no")  # ModelViewSet without permission_classes
         secrets = [f for f in findings if f.check_id == "LP-SEC-007"]
         self.assertTrue(all("q8w7e6r5" not in (f.snippet or "") for f in secrets))  # masked
 
@@ -190,7 +190,7 @@ class ServerFixtures(unittest.TestCase):
         self.assertEqual(node[("nest", "DELETE", "/notes/:id")].auth, "yes")  # class-level guard above @Controller
         self.assertEqual(node[("express", "POST", "/api/login")].rate_limit, "yes")
         _, py = self.findings("clean-python-web")
-        self.assertEqual((py[("django", "ANY", "/invoices/")].auth, py[("django", "ANY", "/invoices/")].owner), ("yes", "yes"))
+        self.assertEqual((py[("django", "ANY", "/api/invoices/")].auth, py[("django", "ANY", "/api/invoices/")].owner), ("yes", "yes"))
         self.assertEqual(py[("fastapi", "POST", "/items")].validation, "yes")  # pydantic model parameter
 
 

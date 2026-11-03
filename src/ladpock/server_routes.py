@@ -10,6 +10,7 @@ towards "go and look" rather than certainty.
 
 from __future__ import annotations
 
+import posixpath
 import re
 from dataclasses import dataclass, field
 
@@ -189,11 +190,59 @@ PAID_CALL = re.compile(
 )
 
 
+def _resolve_module(files: dict[str, str], importer: str, spec: str) -> str | None:
+    if not spec.startswith("."):
+        return None
+    base = posixpath.normpath(posixpath.join(posixpath.dirname(importer), spec))
+    for candidate in (base, *(base + e for e in (".js", ".ts", ".mjs", ".cjs")),
+                      *(f"{base}/index{e}" for e in (".js", ".ts", ".mjs"))):
+        if candidate in files:
+            return candidate
+    return None
+
+
+def _js_mounts(files: dict[str, str]) -> dict[str, tuple[str, bool]]:
+    """Router file -> (URL prefix, auth middleware on the mount), from app.use('/api/x', [auth,] router) and
+    fastify.register(plugin, { prefix: '/api' })."""
+    mounts: dict[str, tuple[str, bool]] = {}
+    for rel, code in files.items():
+        scope = _js_scope(code)
+        for match in re.finditer(r"\b\w+\.(use|register|route)\s*\(", code):
+            open_idx = match.end() - 1
+            close = match_bracket(code, open_idx)
+            if close < 0:
+                continue
+            args = [a.strip() for a in split_args(code, open_idx, close)]
+            if len(args) < 2:
+                continue
+            if match.group(1) == "register":
+                prefix = re.search(r"prefix\s*:\s*['\"`](/[^'\"`]*)['\"`]", args[1])
+                target, middle, path = args[0], "", prefix.group(1) if prefix else None
+            else:
+                first = re.fullmatch(r"['\"`](/[^'\"`]*)['\"`]", args[0])
+                target, middle, path = args[-1], ",".join(args[1:-1]), first.group(1) if first else None
+            if not path:
+                continue
+            inline = re.fullmatch(r"require\(\s*['\"]([^'\"]+)['\"]\s*\)(?:\.\w+)?", target)
+            spec = inline.group(1) if inline else None
+            if not spec and re.fullmatch(r"\w+", target):
+                imported = re.search(rf"(?:const|let|var)\s+{target}\s*=\s*require\(\s*['\"]([^'\"]+)['\"]|"
+                                     rf"import\s+{target}\s+from\s+['\"]([^'\"]+)['\"]|"
+                                     rf"import\s*\{{[^}}]*\b{target}\b[^}}]*\}}\s*from\s*['\"]([^'\"]+)['\"]", code)
+                spec = next((g for g in imported.groups() if g), None) if imported else None
+            module = _resolve_module(files, rel, spec) if spec else None
+            if module and module != rel:
+                auth = bool(JS_AUTH_NAME.search(middle)) or scope.covers(scope.auth, path, match.start())
+                mounts[module] = (path, auth)
+    return mounts
+
+
 def js_routes(index: FileIndex, route_cls) -> list:
     files = _js_server_files(index)
     if not files:
         return []
     functions = _js_functions(files)
+    mounts = _js_mounts(files)
     global_auth = any(re.search(r"APP_GUARD|useGlobalGuards\(", code) and re.search(r"(?i)auth|jwt|clerk|session", code)
                       for code in files.values())
     global_validation = any("ValidationPipe" in code for code in files.values())
@@ -201,6 +250,7 @@ def js_routes(index: FileIndex, route_cls) -> list:
     routes = []
     for rel, code in files.items():
         scope = _js_scope(code)
+        before = len(routes)
         if "@Controller(" in code:
             routes.extend(_nest_routes(route_cls, rel, code, global_auth, global_validation, global_rate))
             continue
@@ -258,6 +308,13 @@ def js_routes(index: FileIndex, route_cls) -> list:
             for method in methods or (["ANY"] if url else []):
                 routes.append(_js_route(route_cls, method, url.group(1), rel, line_of(code, match.start()), "fastify",
                                         obj, obj, code, scope, match.start()))
+        if rel in mounts:
+            prefix, mount_auth = mounts[rel]
+            for route in routes[before:]:
+                route.path = _join(prefix, route.path)
+                route.dynamic = route.dynamic or bool(DYNAMIC.search(route.path))
+                if mount_auth and route.auth == "no":
+                    route.auth = "mw"
     return routes
 
 
@@ -535,17 +592,35 @@ def python_routes(index: FileIndex, route_cls) -> list:
 
 
 def _django_urls(files: dict[str, str]) -> dict[str, str]:
-    """View name -> URL pattern, from every urls.py (include() prefixes aren't followed)."""
+    """View name -> URL pattern, from every urls.py, with include() prefixes (one level) applied."""
+    url_files = [rel for rel in files if rel.endswith("urls.py")]
+    prefixes: dict[str, str] = {}  # urls.py -> prefix it's included under
+    router_prefix: dict[str, str] = {}  # urls.py -> prefix for include(router.urls) in that file
+    for rel in url_files:
+        for m in re.finditer(r"(?:re_)?path\(\s*r?['\"]([^'\"]*)['\"]\s*,\s*include\(\s*(?:['\"]([\w.]+)['\"]|(\w+)\.urls)",
+                             files[rel]):
+            prefix = m.group(1).lstrip("^").rstrip("$")
+            if m.group(3):
+                router_prefix[rel] = prefix
+                continue
+            target = m.group(2).replace(".", "/") + ".py"
+            for other in url_files:
+                if other == target or other.endswith("/" + target):
+                    prefixes[other] = prefix
+
+    def join(*parts: str) -> str:
+        return "/" + "".join(p for p in parts if p)
+
     mapping: dict[str, str] = {}
-    for rel, code in files.items():
-        if not rel.endswith("urls.py"):
-            continue
+    for rel in url_files:
+        code = files[rel]
         for m in re.finditer(r"(?:re_)?path\(\s*r?['\"]([^'\"]*)['\"]\s*,\s*([\w.]+)", code):
             view = m.group(2).rsplit(".", 1)[-1]
             if view not in ("include",):
-                mapping.setdefault(view, "/" + m.group(1).lstrip("^").rstrip("$"))
+                mapping.setdefault(view, join(prefixes.get(rel, ""), m.group(1).lstrip("^").rstrip("$")))
         for m in re.finditer(r"register\(\s*r?['\"]([^'\"]*)['\"]\s*,\s*([\w.]+)", code):
-            mapping.setdefault(m.group(2).rsplit(".", 1)[-1], "/" + m.group(1) + "/")
+            mapping.setdefault(m.group(2).rsplit(".", 1)[-1],
+                               join(prefixes.get(rel, ""), router_prefix.get(rel, ""), m.group(1) + "/"))
     return mapping
 
 

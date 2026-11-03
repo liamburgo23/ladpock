@@ -61,6 +61,10 @@ FOCUS = {
                "them do beyond the app's intended features: read or write files outside expected folders, run "
                "programs, reach the network, or corrupt data.",
     "file": "This is part of a source file. Look for security problems in what's shown.",
+    "infra": "This is deployment or infrastructure configuration (a Dockerfile, Docker Compose, Kubernetes, Terraform "
+             "or a CI workflow). Report settings that expose services or data to the internet, put secrets in the "
+             "file or the image, give containers, roles or tokens more privilege than they need, run untrusted input "
+             "in scripts, or switch off security features. Ignore style, cost and performance.",
 }
 
 

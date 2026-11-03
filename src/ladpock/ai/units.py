@@ -26,6 +26,11 @@ VERDICT_SEVERITIES = {"critical", "high", "medium"}
 SKIP_FILE = re.compile(
     r"\.(?:d\.ts|min\.js|generated\.\w+)$|(?:^|/)(?:migrations?|__generated__|gen|scripts|tools|bench(?:marks?)?|examples?|docs)/"
 )
+INFRA_FILE = re.compile(
+    r"(?:^|/)(?:Dockerfile[^/]*|Containerfile|[^/]*\.dockerfile|docker-compose[^/]*\.ya?ml|compose\.ya?ml|[^/]+\.tf)$|"
+    r"^\.github/workflows/[^/]+\.ya?ml$"
+)
+K8S = re.compile(r"(?m)^apiVersion:\s*\S+[\s\S]*^kind:\s*\w+")
 HOT_PATH = re.compile(r"(?i)api|route|server|auth|session|login|admin|payment|webhook|action|command|handler|db|sql|upload|file")
 
 
@@ -142,10 +147,28 @@ def file_units(index: FileIndex, covered: set[str]) -> list[Unit]:
     return units
 
 
+def infra_units(index: FileIndex) -> list[Unit]:
+    """Dockerfiles, Compose, Kubernetes, Terraform and CI workflows, read with infrastructure-specific instructions."""
+    units = []
+    for rel in index.iter({".yml", ".yaml", ".tf"}, pred=lambda r: bool(INFRA_FILE.search(r))):
+        lines = index.lines(rel)
+        if not lines:
+            continue
+        if rel.endswith((".yml", ".yaml")) and not INFRA_FILE.search(rel) and not K8S.search(index.read(rel) or ""):
+            continue
+        for start in range(1, len(lines) + 1, CHUNK_LINES):
+            chunk: dict[int, str] = {}
+            seg = _take(index, rel, start, start + CHUNK_LINES - 1, chunk)
+            if any(text.strip() for text in chunk.values()):
+                units.append(Unit(f"infra:{rel}:{start}", "infra", rel, f"{rel} lines {seg[0]}-{seg[1]}", "", chunk,
+                                  [seg], 2))
+    return units
+
+
 def build_units(index: FileIndex, findings: list[dict]) -> list[Unit]:
     entry = route_units(index) + command_units(index)
     covered = {u.file for u in entry if u.kind == "route"}
-    units = entry + verdict_units(index, findings) + file_units(index, covered)
+    units = entry + verdict_units(index, findings) + file_units(index, covered) + infra_units(index)
     units.sort(key=lambda u: (u.priority, u.file, min(u.lines, default=0)))
     return units
 

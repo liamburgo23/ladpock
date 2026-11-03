@@ -81,6 +81,15 @@ class SecretFormats(unittest.TestCase):
                 masked = redact(line)
                 self.assertNotIn(sample[-24:-4], masked)
 
+    def test_unquoted_config_values_are_masked(self):
+        self.assertNotIn("Winter2026-Prod", redact("  DATABASE_PASSWORD: Winter2026-Prod!"))
+        self.assertNotIn("q9w8e7r6t5y4", redact("  session_secret: q9w8e7r6t5y4u3i2"))
+        self.assertNotIn("abcdef123456", redact("ENV API_TOKEN=abcdef123456"))
+        for code in ("  password: z.string().min(12),", "  password: req.body.password,", "  token: process.env.TOKEN",
+                     "  secretKeyRef:", "      password: ${{ secrets.DB_PASSWORD }}", "  passwordReset: true"):
+            with self.subTest(code):
+                self.assertEqual(redact(code), code)
+
     def test_ordinary_values_are_left_alone(self):
         for line in ('const id = "sk_test_fixture";', "integrity sha512-SKqvn2mJ0ZYxvY3E1F1c2Lb7dJ8fK9rLm==",
                      'const uuid = "123e4567-e89b-12d3-a456-426614174000";', "keyboard: true", "re_render_count = 4"):
