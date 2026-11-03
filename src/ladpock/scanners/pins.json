@@ -1,0 +1,50 @@
+{
+  "_about": "Exact scanner versions LadPock installs, with the SHA-256 of every file. Hashes are GitHub's recorded release-asset digests, checked by hand when pinned. Only releases at least two weeks old are pinned; update by editing this file in a reviewed commit, never automatically.",
+  "gitleaks": {
+    "version": "8.30.1",
+    "released": "2026-03-21",
+    "repo": "gitleaks/gitleaks",
+    "license": "MIT",
+    "adds": "More secret patterns (over 150 providers), and with Full scans, secrets in your git history that were committed and later deleted.",
+    "binary": "gitleaks",
+    "assets": {
+      "windows-x64": {"file": "gitleaks_8.30.1_windows_x64.zip", "size": 8438883, "sha256": "d29144deff3a68aa93ced33dddf84b7fdc26070add4aa0f4513094c8332afc4e", "archive": "zip", "member": "gitleaks.exe"},
+      "windows-arm64": {"file": "gitleaks_8.30.1_windows_arm64.zip", "size": 7701820, "sha256": "b95f5e4f5c425cedca7ee203d9afd29597e692c4924a12ed42f970537c72cc0f", "archive": "zip", "member": "gitleaks.exe"},
+      "linux-x64": {"file": "gitleaks_8.30.1_linux_x64.tar.gz", "size": 8230402, "sha256": "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb", "archive": "tar.gz", "member": "gitleaks"},
+      "linux-arm64": {"file": "gitleaks_8.30.1_linux_arm64.tar.gz", "size": 7601421, "sha256": "e4a487ee7ccd7d3a7f7ec08657610aa3606637dab924210b3aee62570fb4b080", "archive": "tar.gz", "member": "gitleaks"},
+      "darwin-x64": {"file": "gitleaks_8.30.1_darwin_x64.tar.gz", "size": 8359235, "sha256": "dfe101a4db2255fc85120ac7f3d25e4342c3c20cf749f2c20a18081af1952709", "archive": "tar.gz", "member": "gitleaks"},
+      "darwin-arm64": {"file": "gitleaks_8.30.1_darwin_arm64.tar.gz", "size": 7897593, "sha256": "b40ab0ae55c505963e365f271a8d3846efbc170aa17f2607f13df610a9aeb6a5", "archive": "tar.gz", "member": "gitleaks"}
+    }
+  },
+  "osv-scanner": {
+    "version": "2.7.0",
+    "released": "2026-10-12",
+    "repo": "google/osv-scanner",
+    "license": "Apache-2.0",
+    "adds": "Reads more kinds of lockfiles and manifests, so more of your dependencies get checked for known vulnerabilities.",
+    "binary": "osv-scanner",
+    "assets": {
+      "windows-x64": {"file": "osv-scanner_windows_amd64.exe", "size": 58999296, "sha256": "9964ed64ec9a387391eb4cc006ad5c531154821aef29b793e02c448de4686438", "archive": "none"},
+      "windows-arm64": {"file": "osv-scanner_windows_arm64.exe", "size": 54355456, "sha256": "3e630381c1f1fd3c9c4d447e6ff2ef6c737083371722773db8337eead0f97962", "archive": "none"},
+      "linux-x64": {"file": "osv-scanner_linux_amd64", "size": 57725088, "sha256": "160c6253e2922e9e0a6a9771c5c4c40a4b3c6090b34a3cdd5e80c96cc2e4218b", "archive": "none"},
+      "linux-arm64": {"file": "osv-scanner_linux_arm64", "size": 53870752, "sha256": "4061ef4c021ed3c47f203b818f337e351336cc5cd67c0274fc36bd1dfc728dd7", "archive": "none"},
+      "darwin-x64": {"file": "osv-scanner_darwin_amd64", "size": 58881680, "sha256": "e82c5df7ab0a42dff29a1cd0660711447b56b4c0483ff66ad8634df10fd81a45", "archive": "none"},
+      "darwin-arm64": {"file": "osv-scanner_darwin_arm64", "size": 55336530, "sha256": "d4926ef8da134332543be276dff157e4c170f99ad91fc48e89448a8816bdf70b", "archive": "none"}
+    }
+  },
+  "opengrep": {
+    "version": "1.31.0",
+    "released": "2026-10-15",
+    "repo": "opengrep/opengrep",
+    "license": "LGPL-2.1",
+    "adds": "Runs LadPock's data-flow rules, which follow user input from a request to a dangerous place (SQL, shell commands, outgoing requests) within a file.",
+    "binary": "opengrep",
+    "assets": {
+      "windows-x64": {"file": "opengrep_windows_x86.exe", "size": 53677568, "sha256": "fdd2e22549e7000ceb66976a01366db6910760b2aa4e457b6bda62545070d26a", "archive": "none"},
+      "linux-x64": {"file": "opengrep_manylinux_x86", "size": 46484880, "sha256": "dbbe3c2058dbe600c449a8ba22ea79a1643a6660658400090d0323a8d0d31147", "archive": "none"},
+      "linux-arm64": {"file": "opengrep_manylinux_aarch64", "size": 47910328, "sha256": "2b713a29a00237f85408b83002fc111db5b94c7fa8d263f0a93184a960655d9d", "archive": "none"},
+      "darwin-x64": {"file": "opengrep_osx_x86", "size": 48326656, "sha256": "2f0d0c7a41a3e48dc02c30dabc4851bc37c18f021b46c9ae54b15177ece088ee", "archive": "none"},
+      "darwin-arm64": {"file": "opengrep_osx_arm64", "size": 47298224, "sha256": "035dd8fd2410fe68513916df0c2895257fffafcd5314b4a118484ce8db62bedb", "archive": "none"}
+    }
+  }
+}

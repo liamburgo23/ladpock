@@ -166,6 +166,7 @@ function currentRoute() {
   if (hash.startsWith("/add")) return { name: "add" };
   const help = hash.match(/^\/help(?:\/([\w-]+))?/);
   if (help) return { name: "help", section: help[1] || null };
+  if (hash.startsWith("/scanners")) return { name: "scanners" };
   return { name: "home" };
 }
 
@@ -186,6 +187,7 @@ async function route() {
     if (r.name === "project") await renderProject(r.id, r.tab, view);
     else if (r.name === "add") await renderAdd(await startFolder(), view);
     else if (r.name === "help") renderHelp(r.section);
+    else if (r.name === "scanners") await renderScanners(view);
     else await renderHome(view);
   } catch (e) {
     if (e.status === 401) return;
@@ -281,6 +283,7 @@ function jobFinished(j) {
   toast(finishMessage(j));
   const r = currentRoute();
   if (r.name === "project" && (j.project_id === r.id || j.kind === "full-all")) renderProject(r.id, r.tab, state.view);
+  else if (r.name === "scanners" && j.kind === "install") renderScanners(state.view);
   else if (r.name === "home") renderHome(state.view);
 }
 
@@ -330,8 +333,9 @@ document.addEventListener("click", () => {
 function drawJobBanner() {
   const el = $("#job-banner");
   const r = currentRoute();
-  if (!el || r.name !== "project") return;
-  const mine = jobs.list.filter((j) => j.project_id === r.id || j.kind === "full-all");
+  if (!el || (r.name !== "project" && r.name !== "scanners")) return;
+  const mine = r.name === "scanners" ? jobs.list.filter((j) => j.kind === "install")
+    : jobs.list.filter((j) => j.project_id === r.id || j.kind === "full-all");
   const running = mine.find((j) => j.status === "running");
   setRunButtonsBusy(Boolean(running));
   if (running) {
@@ -615,6 +619,13 @@ function scanCard(p, profiles, aiState) {
   const option = (input, label, help) => h("label", { class: "option", for: input.id }, input,
     h("span", null, h("span", null, label), h("br"), h("span", { class: "faint" }, help)));
 
+  const scannerHint = h("span", { class: "faint" }, "Gitleaks, OSV-Scanner and Opengrep, if they're installed.");
+  api("GET", "/api/scanners").then((s) => {
+    const have = s.tools.filter((x) => x.installed).map((x) => x.name);
+    const missing = s.tools.filter((x) => !x.installed && x.supported).map((x) => x.name);
+    scannerHint.replaceChildren(have.length ? `Installed: ${have.join(", ")}. ` : "None installed yet. ",
+      missing.length ? h("a", { href: "#/scanners" }, `Install ${missing.join(", ")}`) : "");
+  }).catch(() => {});
   const run = runButton("Run scan", () => startTask(`/api/projects/${p.id}/scan`, {
     profile, external: external.checked, history: historyOpt.checked, offline: offline.checked }));
 
@@ -625,7 +636,7 @@ function scanCard(p, profiles, aiState) {
         desc,
         profileComparison(profiles),
         h("div", null,
-          option(external, "Use installed scanners", "Gitleaks, OSV-Scanner and Opengrep, if they're installed."),
+          option(external, "Use installed scanners", scannerHint),
           option(historyOpt, "Search git history for secrets", "Slower. Needs Gitleaks. Always on in Full."),
           option(offline, "Offline", "Skip the network and use the last vulnerability data LadPock downloaded.")),
         h("div", { class: "row" }, run, !p.exists ? h("span", { class: "faint" }, "This folder no longer exists.") : null)),
@@ -1000,6 +1011,60 @@ function drawHistory(container, history) {
       h("td", null, `${s.score}/100`), h("td", { style: "width:35%" }, h("div", { class: "bar" }, h("span", { style: `width:${s.score}%` })))))))));
 }
 
+// ---------- optional scanners ----------
+
+async function renderScanners(view) {
+  if (!document.querySelector(".scanners-page")) $("#app").replaceChildren(spinner("Checking installed scanners"));
+  const data = await api("GET", "/api/scanners");
+  if (view !== state.view) return;
+  const mb = (bytes) => `${(bytes / 1e6).toFixed(1)} MB`;
+  const installable = data.tools.filter((t) => t.supported && !(t.installed && (!t.managed || t.up_to_date)));
+  const install = (tools) => {
+    const lines = tools.map((t) => `• ${t.file} (${mb(t.download_size)}) from github.com/${t.repo}, ${t.license} licence`);
+    const total = tools.reduce((sum, t) => sum + t.download_size, 0);
+    if (!confirm(`Download and install?\n\n${lines.join("\n")}\n\nTotal ${mb(total)}. Each file is checked against the SHA-256 `
+      + "built into LadPock before it's installed; anything that doesn't match is deleted.")) return;
+    startTask("/api/scanners/install", { names: tools.map((t) => t.name) });
+  };
+  const card = (t) => {
+    let state_, action = null;
+    if (!t.supported) state_ = h("span", { class: "faint" }, "No pinned build for this computer");
+    else if (t.installed && !t.managed) state_ = h("span", { class: "cell-yes" }, `Installed (${t.installed_version || "found"} at ${t.path})`);
+    else if (t.installed && t.up_to_date) state_ = h("span", { class: "cell-yes" }, `Installed by LadPock (${t.installed_version || t.version})`);
+    else if (t.installed) state_ = h("span", { class: "cell-mid" }, `Installed by LadPock, ${t.version} available`);
+    else state_ = h("span", { class: "faint" }, "Not installed");
+    if (t.supported && !(t.installed && (!t.managed || t.up_to_date))) {
+      action = runButton(t.installed ? "Update" : "Install", () => install([t]));
+    } else if (t.managed) {
+      action = h("button", { class: "btn small", onclick: async () => {
+        if (!confirm(`Remove ${t.name} from LadPock's folder?`)) return;
+        await api("POST", "/api/scanners/remove", { name: t.name });
+        toast(`Removed ${t.name}`);
+        renderScanners(state.view);
+      } }, "Remove");
+    }
+    return h("div", { class: "folder-row", style: "align-items:flex-start" },
+      h("div", { class: "grow" },
+        h("div", { class: "row" }, h("strong", null, t.name), h("span", { class: "chip" }, `v${t.version}`),
+          h("span", { class: "faint" }, `${t.license} · released ${t.released}${t.download_size ? ` · ${mb(t.download_size)}` : ""}`)),
+        h("p", { class: "muted", style: "margin-top:4px" }, t.adds),
+        h("div", { style: "margin-top:4px" }, state_)),
+      action);
+  };
+  $("#app").replaceChildren(h("div", { class: "stack scanners-page" },
+    h("a", { href: "#/" }, "← Your projects"),
+    h("div", { class: "section-title" }, h("h1", null, "Optional scanners"),
+      installable.length ? runButton(`Install ${installable.length === data.tools.length ? "all" : "missing"} (${mb(installable.reduce((s, t) => s + t.download_size, 0))})`,
+        () => install(installable), true) : null),
+    h("p", { class: "muted" }, "LadPock works on its own. These free, open-source tools add coverage, and every scan uses them automatically once installed. ",
+      helpLink("scanners", "How installing works")),
+    h("div", { id: "job-banner" }),
+    h("div", { class: "card flush list" }, data.tools.map(card)),
+    h("p", { class: "faint" }, `Installed into ${data.bin_dir}. Nothing is added to your PATH or run with administrator rights. `
+      + "Versions are pinned inside LadPock and only change when LadPock itself is updated.")));
+  drawJobBanner();
+}
+
 // ---------- help ----------
 
 const HELP = [
@@ -1058,6 +1123,15 @@ const HELP = [
       "EPSS: the estimated chance a vulnerability will be exploited in the next 30 days."],
     "Because LadPock remembers each project's dependency list, it can tell you when a new vulnerability affects a project you haven't touched. That's the red banner on the home page.",
     "What's sent: package names and versions (to OSV.dev and the npm and PyPI registries) and CVE IDs (to EPSS). Never your code. There's no telemetry.",
+  ]],
+  ["scanners", "Optional scanners and how they're installed", [
+    "Gitleaks (more secret patterns, plus git history in Full scans), OSV-Scanner (more lockfile types) and Opengrep (data-flow rules that follow user input to SQL, shell commands and outgoing requests) add coverage on top of LadPock's own checks.",
+    "Installing from the Scanners page is safe by design:",
+    ["the exact version and the SHA-256 of every file are built into LadPock, from releases at least two weeks old",
+      "files come over HTTPS from each project's official GitHub release",
+      "a download that doesn't match the pinned SHA-256 is deleted and nothing is installed, which defeats tampered or replaced releases",
+      "only the expected program is taken from an archive, and it goes into LadPock's own folder, not your PATH"],
+    "Versions only change when LadPock is updated, in a reviewed change. If you installed a scanner yourself, LadPock uses yours and leaves it alone.",
   ]],
   ["routes", "Routes and commands", [
     "For Next.js, the Routes tab lists every API route and server action. For each one it shows whether the handler checks who's calling (Auth), whether it checks the record belongs to them (Owner), whether input is validated, and whether there's a rate limit.",

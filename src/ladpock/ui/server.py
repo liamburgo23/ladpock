@@ -34,6 +34,7 @@ from ..ai import review as ai_review
 from ..ai import settings as ai_settings
 from ..ai import system as ai_system
 from ..ai.client import LocalModelError
+from ..scanners import install as scanner_install
 from ..checks import REGISTRY
 from ..db import DB
 from ..feeds import epss, kev
@@ -576,6 +577,49 @@ def api_full_check_all(app, db, match, query, body):
     return 202, {"job": job.id}
 
 
+def api_scanners(app, db, match, query, body):
+    return 200, {"platform": scanner_install.platform_key(), "bin_dir": str(scanner_install.bin_dir()),
+                 "tools": [s.to_dict() for s in scanner_install.status()]}
+
+
+def api_scanners_install(app, db, match, query, body):
+    names = body.get("names")
+    pins = scanner_install.load_pins()
+    if not isinstance(names, list) or not names or any(n not in pins for n in names):
+        raise ApiError(400, f"Choose scanners from: {', '.join(pins)}")
+
+    def work(db: DB, job: Job) -> dict:
+        installed, failed = [], {}
+        for name in names:
+            job.enter(f"Download and verify {name} {pins[name]['version']}")
+
+            def progress(fraction: float) -> None:
+                job.fraction = fraction
+
+            try:
+                scanner_install.install(name, progress=progress, log=job.log.append)
+                installed.append(name)
+            except scanner_install.InstallError as exc:
+                job.log.append(f"{name}: {exc}")
+                failed[name] = str(exc)
+        if failed and not installed:
+            raise scanner_install.InstallError("; ".join(f"{k}: {v}" for k, v in failed.items()))
+        return {"installed": installed, "failed": failed}
+
+    steps = [f"Download and verify {n} {pins[n]['version']}" for n in names]
+    job = app.start_job("install", None, f"Installing {', '.join(names)}", steps, work)
+    return 202, {"job": job.id}
+
+
+def api_scanners_remove(app, db, match, query, body):
+    name = str(body.get("name", ""))
+    try:
+        removed = scanner_install.remove(name)
+    except scanner_install.InstallError as exc:
+        raise ApiError(400, str(exc)) from exc
+    return 200, {"removed": removed}
+
+
 def api_job_stop(app, db, match, query, body):
     job = app.jobs.get(match.group(1))
     if not job:
@@ -770,6 +814,9 @@ ROUTES: list[tuple[str, re.Pattern[str], Callable]] = [
     ("GET", re.compile(r"/api/checks"), api_checks),
     ("POST", re.compile(r"/api/jobs/([0-9a-f]{32})/stop"), api_job_stop),
     ("GET", re.compile(r"/api/jobs"), api_jobs),
+    ("GET", re.compile(r"/api/scanners"), api_scanners),
+    ("POST", re.compile(r"/api/scanners/install"), api_scanners_install),
+    ("POST", re.compile(r"/api/scanners/remove"), api_scanners_remove),
     ("POST", re.compile(r"/api/projects/(\d+)/full-check"), api_full_check),
     ("POST", re.compile(r"/api/full-check"), api_full_check_all),
     ("GET", re.compile(r"/api/ai"), api_ai_status),

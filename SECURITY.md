@@ -38,9 +38,18 @@ follows; a change that breaks one is a security bug.
    - the AI has no way to suppress or downgrade a scanner finding
    The nightly task is created only after you confirm. It's registered for your account with least privilege,
    and `ladpock ai unschedule` removes it.
-10. **Optional scanners are external programs.** Gitleaks, OSV-Scanner and Opengrep are found on your PATH (or in
-   LadPock's data folder) and run as subprocesses with timeouts. Install them from their official releases and
-   verify the checksums they publish.
+10. **Optional scanners are pinned and verified.** Gitleaks, OSV-Scanner and Opengrep run as subprocesses with
+   timeouts. When LadPock installs them (`ladpock scanners install` or the Scanners page), the exact version, file
+   name, size and SHA-256 come from `scanners/pins.json`, which ships inside LadPock. Nothing about what to install
+   is read from the network.
+   - Downloads are HTTPS only, including redirects, and stop if they grow past the pinned size.
+   - A file whose hash doesn't match is deleted and nothing is installed.
+   - Only the one expected program is copied out of an archive. Archive paths are never used, so a crafted archive
+     can't write elsewhere.
+   - Programs go into LadPock's own folder, never your PATH, with no extra privileges.
+   - Pins come from releases at least two weeks old, and change only in a reviewed commit. Moved tags and replaced
+     release files are exactly what this defends against.
+   - Copies you installed yourself are used as they are and never modified.
 
 ## Limits
 

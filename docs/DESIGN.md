@@ -113,14 +113,22 @@ Leads are keyed by a fingerprint of category plus quote, so a dismissed lead sta
 it changes. `system.py` covers Windows power state, keep-awake, below-normal priority, and the Task Scheduler XML:
 InteractiveToken, LeastPrivilege, no start on battery, stop on battery, 12-hour limit, optional WakeToRun.
 
+## Scanner installer (built in 0.6.0)
+
+`scanners/pins.json` holds, per tool and platform (windows/linux/darwin × x64/arm64), the release file name, exact
+size, SHA-256 and archive layout. The hashes are GitHub's recorded asset digests, cross-checked against the API when
+pinned. `scanners/install.py` downloads with an HTTPS-only redirect handler, streams into a temp folder while
+hashing, and enforces the exact size and hash. It extracts only the named member (by basename; archive paths are
+ignored), and atomically replaces `<data dir>/bin/<tool>`. `scanners.base.which` already prefers that folder.
+To update a pin, change pins.json in a reviewed commit after the release has aged two weeks.
+
 ## Next milestones
 
 1. **External AI review (optional, your own key).** Separate toggle, budget cap, and a per-project "never send"
    switch. Secrets are redacted before sending. Used to escalate local leads and serious findings.
 2. **More packs.** Express/Fastify, FastAPI/Django, SvelteKit, Remix, Electron. Each one adds a route parser, rules and fixtures.
-3. **Scanner installer.** Downloads pinned versions by SHA-256 with a cooldown before adopting new releases.
-4. **Live probes.** Localhost by default, ownership-verified otherwise. Headers, CORS, exposed paths, a small rate-limit burst.
-5. **Notifications.** Optional desktop notification when a long task or the nightly review finishes.
+3. **Live probes.** Localhost by default, ownership-verified otherwise. Headers, CORS, exposed paths, a small rate-limit burst.
+4. **Notifications.** Optional desktop notification when a long task or the nightly review finishes.
 
 ## Tasks in the dashboard (0.5.0)
 

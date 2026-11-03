@@ -179,7 +179,9 @@ def _dispatch(args, db: DB) -> int:
         print(f"  {args.at}: {Path(program).name} {arguments}")
         print("  Only when plugged in. Stops on battery and at the --until time." +
               (" Wakes the computer from sleep." if args.wake else ""))
-        if not args.yes and input("Create it? [y/N] ").strip().lower() not in ("y", "yes"):
+        from ..cli import ask_yes
+
+        if not args.yes and not ask_yes("Create it? [y/N] "):
             print("Cancelled.")
             return 1
         system.schedule(args.at, args.until, args.wake)

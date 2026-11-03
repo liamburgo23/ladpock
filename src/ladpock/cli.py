@@ -208,7 +208,7 @@ def cmd_doctor(args, db: DB) -> int:
         if exe:
             print(f"  [found]   {name.ljust(12)} {version_of(exe, *version_args) or ''}")
         else:
-            print(f"  [missing] {name.ljust(12)} {purpose}. Install: {module.INSTALL}")
+            print(f"  [missing] {name.ljust(12)} {purpose}. Install: ladpock scanners install {name}")
     ollama = which("ollama")
     print(f"\nLocal AI      {'Ollama found. See: ladpock ai status' if ollama else 'Ollama not found (https://ollama.com)'}")
     if args.path:
@@ -217,6 +217,63 @@ def cmd_doctor(args, db: DB) -> int:
         print(f"Stack         {', '.join(detect(index)) or 'not recognised'}")
         print(f"Files indexed {len(index.paths)}" + (f" ({index.skipped_large} skipped as too large)" if index.skipped_large else ""))
     return 0
+
+
+def ask_yes(prompt: str) -> bool:
+    """True only for an explicit yes; no keyboard (EOF) or Ctrl+C means no."""
+    try:
+        return input(prompt).strip().lower() in ("y", "yes")
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+
+
+def cmd_scanners(args, db: DB) -> int:
+    from .scanners import install as installer
+
+    tools = installer.status()
+    if args.action == "list":
+        print(f"Optional scanners (this computer: {installer.platform_key() or 'unsupported platform'}):")
+        for t in tools:
+            if t.installed:
+                where = "installed by LadPock" if t.managed else f"found at {t.path}"
+                state = f"{t.installed_version or 'installed'} ({where})" + ("" if t.up_to_date or not t.managed else ", update available")
+            else:
+                state = "not installed"
+            print(f"  {t.name:<12} pinned {t.version:<8} {state}")
+            print(f"  {'':<12} {t.adds}")
+        print("\nInstall: ladpock scanners install [name ...]  (downloads are checked against pinned SHA-256 hashes)")
+        return 0
+    if args.action == "remove":
+        for name in args.names or []:
+            print(f"Removed {name}" if installer.remove(name) else f"{name} wasn't installed by LadPock")
+        return 0
+    wanted = args.names or [t.name for t in tools if t.supported and not (t.managed and t.up_to_date)
+                            and not (t.installed and not t.managed)]
+    chosen = [t for t in tools if t.name in wanted]
+    unknown = set(wanted) - {t.name for t in chosen}
+    if unknown:
+        print(f"Unknown scanner(s): {', '.join(sorted(unknown))}", file=sys.stderr)
+        return 2
+    if not chosen:
+        print("Everything is already installed and up to date.")
+        return 0
+    total = sum(t.download_size or 0 for t in chosen)
+    print("LadPock will download and install:")
+    for t in chosen:
+        print(f"  {t.file}  ({(t.download_size or 0) / 1e6:.1f} MB) from github.com/{t.repo}, {t.license} licence")
+    print(f"Total {total / 1e6:.1f} MB into {installer.bin_dir()}. Each file is checked against its pinned SHA-256 first.")
+    if not args.yes and not ask_yes("Continue? [y/N] "):
+        print("Cancelled.")
+        return 1
+    failed = 0
+    for t in chosen:
+        try:
+            installer.install(t.name)
+        except installer.InstallError as exc:
+            failed += 1
+            print(f"{t.name}: {exc}", file=sys.stderr)
+    return 1 if failed else 0
 
 
 def cmd_ui(args, db: DB) -> int:
@@ -296,6 +353,11 @@ def build_parser() -> argparse.ArgumentParser:
     checks = sub.add_parser("checks", help="list every built-in check")
     checks.add_argument("--markdown", action="store_true")
 
+    scanners = sub.add_parser("scanners", help="list, install or remove the optional scanners (pinned and checksum-verified)")
+    scanners.add_argument("action", nargs="?", choices=["list", "install", "remove"], default="list")
+    scanners.add_argument("names", nargs="*", help="gitleaks, osv-scanner, opengrep (default: all missing)")
+    scanners.add_argument("--yes", action="store_true", help="don't ask before downloading")
+
     doctor = sub.add_parser("doctor", help="check your setup and optional scanners")
     doctor.add_argument("path", nargs="?")
 
@@ -313,7 +375,7 @@ COMMANDS = {
     None: cmd_status, "status": cmd_status, "scan": cmd_scan, "full-check": cmd_full_check, "routes": cmd_routes,
     "fix-prompt": cmd_fix_prompt,
     "advisories": cmd_advisories, "suppress": cmd_suppress, "projects": cmd_projects, "checks": cmd_checks,
-    "doctor": cmd_doctor, "ui": cmd_ui, "ai": lambda args, db: _ai_run(args, db),
+    "doctor": cmd_doctor, "ui": cmd_ui, "scanners": cmd_scanners, "ai": lambda args, db: _ai_run(args, db),
 }
 
 

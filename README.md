@@ -160,6 +160,7 @@ you've scanned before.
 | `ladpock projects discover <folder>` | Register every project inside a folder |
 | `ladpock suppress <ref> --reason "..."` | Accept a finding for 90 days (`--days 0` = forever) |
 | `ladpock ai status\|benchmark\|review\|leads\|nightly\|schedule` | Local AI review (see above) |
+| `ladpock scanners [install\|remove] [name]` | List, install or remove the optional scanners (pinned, checksum-verified) |
 | `ladpock checks` | List every check |
 | `ladpock doctor [path]` | Check your setup and optional scanners |
 
@@ -168,7 +169,15 @@ Add `--offline` to any command to skip the network and use cached data. LadPock 
 ### Optional scanners
 
 LadPock works on its own. If these are installed, it uses them too, and their results are merged and
-de-duplicated:
+de-duplicated. The easiest way to install them is the **Scanners** page in the dashboard, or:
+
+```bash
+ladpock scanners install
+```
+
+LadPock downloads exact pinned versions from each project's GitHub release. It checks every file against a SHA-256
+hash built into LadPock before installing it, and installs into its own folder, not your PATH. A file that doesn't
+match is deleted.
 
 - [Gitleaks](https://github.com/gitleaks/gitleaks#installing) adds more secret patterns, and scans git history
   with `--history` or `--profile full`.
@@ -176,7 +185,7 @@ de-duplicated:
 - [Opengrep](https://github.com/opengrep/opengrep#installation) (or Semgrep CE) runs LadPock's data-flow rules
   for injection.
 
-Install them from their official releases and verify the published checksums.
+If you install them yourself instead (for example with a package manager), LadPock uses yours and leaves them alone.
 
 ### In CI
 
@@ -221,7 +230,6 @@ it. Secrets are masked before anything is stored.
 - External AI review with your own API key (budget cap, a "never send" switch per project), for a second
   opinion on serious findings and local leads
 - More framework packs: Express, FastAPI, SvelteKit, Remix
-- Pinned, checksum-verified installer for the optional scanners
 - Safe live probes against your own running app (headers, CORS, rate limits)
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the architecture and the decisions behind it.
