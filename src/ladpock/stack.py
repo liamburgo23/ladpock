@@ -16,13 +16,15 @@ LABELS = {
     "anthropic": "Anthropic", "ai-sdk": "Vercel AI SDK", "fastapi": "FastAPI", "flask": "Flask",
     "django": "Django", "node": "Node.js", "python": "Python", "docker": "Docker",
     "github-actions": "GitHub Actions", "tauri": "Tauri", "rust": "Rust", "koa": "Koa", "nestjs": "NestJS",
-    "kubernetes": "Kubernetes", "terraform": "Terraform",
+    "kubernetes": "Kubernetes", "terraform": "Terraform", "electron": "Electron", "react-native": "React Native",
+    "expo": "Expo", "android": "Android", "ios": "iOS", "flutter": "Flutter",
 }
 
 # Stacks with dedicated, framework-aware checks. Everything else still gets the
 # generic checks (secrets, dependencies, injection patterns, config).
 DEEP_PACKS = {"nextjs", "react", "supabase", "firebase", "stripe", "github-actions", "tauri", "express", "fastify",
-              "hono", "koa", "nestjs", "fastapi", "flask", "django", "docker", "kubernetes", "terraform"}
+              "hono", "koa", "nestjs", "fastapi", "flask", "django", "docker", "kubernetes", "terraform", "electron",
+              "react-native", "expo", "android", "ios", "flutter"}
 
 _NPM = {
     "next": "nextjs", "react": "react", "vite": "vite", "express": "express", "fastify": "fastify",
@@ -33,6 +35,7 @@ _NPM = {
     "@prisma/client": "prisma", "drizzle-orm": "drizzle", "openai": "openai",
     "@anthropic-ai/sdk": "anthropic", "ai": "ai-sdk", "@tauri-apps/api": "tauri", "@tauri-apps/cli": "tauri",
     "koa": "koa", "@koa/router": "koa", "@nestjs/core": "nestjs", "@nestjs/common": "nestjs", "@hono/node-server": "hono",
+    "electron": "electron", "react-native": "react-native", "expo": "expo",
 }
 _PY = {
     "fastapi": "fastapi", "flask": "flask", "django": "django", "supabase": "supabase", "stripe": "stripe",
@@ -101,6 +104,12 @@ def detect(index: FileIndex) -> list[str]:
             add("docker")
         elif name.endswith((".tf", ".tfvars")):
             add("terraform")
+        elif name == "AndroidManifest.xml":
+            add("android")
+        elif name == "Info.plist":
+            add("ios")
+        elif name == "pubspec.yaml":
+            add("flutter")
         elif name.endswith((".yml", ".yaml")) and not rel.startswith(".github/") and re.search(
                 r"(?m)^apiVersion:\s*\S+[\s\S]*^kind:\s*(?:Deployment|Pod|Service|StatefulSet|DaemonSet|Ingress|Secret|"
                 r"ConfigMap|Job|CronJob)\b", index.read(rel) or ""):

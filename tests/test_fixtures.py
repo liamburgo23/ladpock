@@ -48,6 +48,10 @@ EXPECTED_INFRA = {
     "LP-INFRA-004", "LP-INFRA-005", "LP-TF-001", "LP-TF-002", "LP-TF-003", "LP-TF-004", "LP-TF-005", "LP-SUP-006",
     "LP-SUP-007",
 }
+EXPECTED_APPS = {
+    "LP-ELEC-001", "LP-ELEC-002", "LP-ELEC-003", "LP-ELEC-004", "LP-ELEC-005", "LP-ELEC-006", "LP-ELEC-007",
+    "LP-ELEC-008", "LP-ELEC-009", "LP-MOB-001", "LP-MOB-002", "LP-MOB-003", "LP-MOB-004", "LP-MOB-005",
+}
 # Produced only with network access or git, covered by their own tests.
 NOT_IN_OFFLINE_FIXTURE = {"LP-SEC-004", "LP-DEP-001", "LP-SUP-005"}
 
@@ -77,7 +81,7 @@ class VulnerableFixture(unittest.TestCase):
 
     def test_catalogue_is_fully_covered(self):
         untested = (set(REGISTRY) - EXPECTED_VULN - EXPECTED_TAURI - EXPECTED_NODE - EXPECTED_PYTHON - EXPECTED_INFRA
-                    - NOT_IN_OFFLINE_FIXTURE)
+                    - EXPECTED_APPS - NOT_IN_OFFLINE_FIXTURE)
         self.assertEqual(sorted(untested), [], "add these checks to a vulnerable fixture")
 
     def test_secrets_are_masked_in_output(self):
@@ -101,7 +105,8 @@ class VulnerableFixture(unittest.TestCase):
 
 class CleanFixture(unittest.TestCase):
     def test_clean_apps_have_no_findings(self):
-        for name in ("clean-next-supabase", "clean-tauri", "clean-node-api", "clean-python-web", "clean-infra"):
+        for name in ("clean-next-supabase", "clean-tauri", "clean-node-api", "clean-python-web", "clean-infra",
+                     "clean-electron", "clean-mobile"):
             with self.subTest(name), materialize(name) as tmp:
                 findings, errors = run_all(_context(Path(tmp) / name))
                 self.assertEqual(errors, [])
@@ -205,6 +210,21 @@ class InfraFixture(unittest.TestCase):
         self.assertEqual(at("LP-INFRA-002"), {"docker-compose.yml:16", "docker-compose.yml:20"})  # not the app's port 3000
         baked = [f.snippet for f in findings if f.check_id == "LP-DOCKER-002" and "ENV" in (f.snippet or "")]
         self.assertTrue(baked and all("****" in s for s in baked))  # values masked in reports
+
+
+class AppFixtures(unittest.TestCase):
+    def test_desktop_and_mobile_checks_fire(self):
+        found = set()
+        for name in ("vuln-electron", "vuln-mobile"):
+            with materialize(name) as tmp:
+                findings, errors = run_all(_context(Path(tmp) / name))
+            self.assertEqual(errors, [])
+            found |= {f.check_id for f in findings}
+            if name == "vuln-mobile":
+                exported = {f.location for f in findings if f.check_id == "LP-MOB-003"}
+                self.assertNotIn("android/app/src/main/AndroidManifest.xml:7", exported)  # the launcher activity
+                self.assertIn("LP-VIBE-001", found)  # Flutter badCertificateCallback => true
+        self.assertEqual(sorted(EXPECTED_APPS - found), [])
 
 
 class RouteMatrix(unittest.TestCase):

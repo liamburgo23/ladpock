@@ -1,0 +1,8 @@
+{
+  "name": "vuln-electron",
+  "private": true,
+  "main": "main.js",
+  "devDependencies": {
+    "electron": "30.0.0"
+  }
+}

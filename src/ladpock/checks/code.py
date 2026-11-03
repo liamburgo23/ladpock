@@ -20,7 +20,13 @@ regex_check(
         "Never disable verification in code that ships.",
     pattern=r"rejectUnauthorized\s*:\s*false|NODE_TLS_REJECT_UNAUTHORIZED\s*=\s*['\"]?0|\bverify\s*=\s*False\b|"
             r"InsecureSkipVerify\s*:\s*true|_create_unverified_context|\bCERT_NONE\b|strict-ssl\s*=\s*false|"
-            r"danger_accept_invalid_(?:certs|hostnames)\(\s*true\s*\)",
+            r"danger_accept_invalid_(?:certs|hostnames)\(\s*true\s*\)|"
+            r"badCertificateCallback\s*=\s*\([^)]*\)\s*(?:=>\s*true|\{\s*return\s+true)|ALLOW_ALL_HOSTNAME_VERIFIER|"
+            r"NoopHostnameVerifier|checkServerTrusted\([^)]*\)\s*(?:throws\s+[\w.]+\s*)?\{\s*\}|"
+            r"(?:hostnameVerifier|HostnameVerifier)\s*\{\s*_?\w*,?\s*_?\w*\s*->\s*true\s*\}|verify\([^)]*SSLSession[^)]*\)\s*\{\s*return\s+true|"
+            r"URLCredential\(\s*trust:\s*challenge\.protectionSpace\.serverTrust|OpenSSL::SSL::VERIFY_NONE|"
+            r"CURLOPT_SSL_VERIFY(?:PEER|HOST)\s*,\s*(?:false|0)\b|ServerCertificate(?:Custom)?ValidationCallback\s*=[^;]*=>\s*true|"
+            r"\bcheck_hostname\s*=\s*False\b",
     exts=CODE_EXT | CONFIG_EXT, include_env=True, names={".npmrc"}, cwe=("CWE-295",),
 )
 

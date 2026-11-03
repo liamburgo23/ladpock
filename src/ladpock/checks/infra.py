@@ -422,8 +422,8 @@ def tf_secret(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
                 if re.search(r"(?i)description|_arn|_id|_name|_length|_version|_rotation", match.group(1)):
                     continue
                 yield ctx.finding(info, rel, i, line, confidence="high")
-    for rel in ctx.index.paths:
-        if rel.endswith((".tfstate", ".tfstate.backup")) and (ctx.git_files is None or rel in ctx.git_files):
+    for rel in ctx.index.iter({".tfstate"}):
+        if ctx.git_files is None or rel in ctx.git_files:
             yield ctx.finding(info, rel, None, None, confidence="medium",
                               message="Terraform state holds every resource's attributes, including generated "
                                       "passwords and keys, in plain text. Keep it in a remote backend, not in git.")
