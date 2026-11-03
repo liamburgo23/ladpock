@@ -69,6 +69,7 @@ class ScanResult:
     human: list[tuple[str, str]] = field(default_factory=list)
     started: str = ""
     checks_run: int = 0
+    changes: dict | None = None
 
     def to_dict(self) -> dict:
         deep, generic = coverage(self.stack)
@@ -289,12 +290,29 @@ def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bo
                     "history": bool(external and settings["scanners"]
                                     and (history if history is not None else settings["history"]))},
     }
+    summary["changes"] = changes = compare_with_previous(db, project_id, findings, profile)
     db.save_scan(project_id, started, profile, card.overall, card.grade, stack, findings, summary)
     return ScanResult(
         root=root, project_id=project_id, stack=stack, profile=profile, findings=findings, suppressed=suppressed,
         routes=routes, advisory_hits=hits, scorecard=card, scanners=scanners, feeds=feeds, components=len(components),
-        errors=errors, human=items_for(set(stack)), started=started, checks_run=checks_run,
+        errors=errors, human=items_for(set(stack)), started=started, checks_run=checks_run, changes=changes,
     )
+
+
+def compare_with_previous(db: DB, project_id: int, findings: list[Finding], profile: str) -> dict | None:
+    """What's new and what's fixed since this project's previous scan (findings match by their stable ref)."""
+    previous = db.latest_scan(project_id)
+    if not previous:
+        return None
+    before = {f["ref"]: f for f in db.scan_findings(previous["id"])}
+    now = {f.fingerprint for f in findings}
+    fixed = [{k: f.get(k) for k in ("ref", "title", "severity", "category", "file", "line")}
+             for ref, f in before.items() if ref not in now]
+    return {
+        "previous_at": previous["finished_at"], "previous_grade": previous["grade"], "previous_score": previous["score"],
+        "previous_profile": previous["profile"], "same_profile": previous["profile"] == profile,
+        "new": sorted(ref for ref in now if ref not in before), "fixed": fixed[:200], "fixed_count": len(fixed),
+    }
 
 
 def refresh_all_projects(db: DB, offline: bool, log: Callable[[str], None] = _log) -> tuple[list[FeedStatus], dict[int, str]]:

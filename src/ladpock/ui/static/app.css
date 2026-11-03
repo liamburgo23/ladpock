@@ -310,6 +310,10 @@ a.score-tile:hover { box-shadow: 0 0 0 1px var(--accent); }
 .cat-detail .body table { font-size: 13px; }
 .gap-row { display: flex; gap: 14px; align-items: center; padding: 12px 20px; flex-wrap: wrap; }
 .gap-row p { margin-top: 2px; }
+.changes > * + * { margin-top: 8px; }
+.changes .grade { min-width: 32px; height: 28px; font-size: 14px; border-radius: 8px; }
+.fixed-list { margin: 6px 0 0; padding-left: 18px; font-size: 14px; }
+.fixed-list li { margin: 3px 0; }
 
 @media (max-width: 600px) {
   main { padding: 16px; }

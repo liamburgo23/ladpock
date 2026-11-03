@@ -94,6 +94,13 @@ def render_scan(result, s: Style, show_human: bool = False) -> str:
     out.append("")
     card = result.scorecard
     out.append(f"  Overall  {s.grade(card.grade.ljust(2))}  {card.overall}/100    {_counts_line(card.counts, s)}")
+    changes = getattr(result, "changes", None)
+    if changes:
+        delta = card.overall - (changes["previous_score"] or 0)
+        trend = f"{changes['previous_grade']} -> {card.grade} ({'+' if delta >= 0 else ''}{delta})"
+        note = "" if changes["same_profile"] else s.dim(f"  (last scan was {changes['previous_profile']})")
+        out.append(f"  Since last {trend}: {s('%d fixed' % changes['fixed_count'], '32')}, "
+                   f"{s('%d new' % len(changes['new']), '33' if changes['new'] else '0')}{note}")
     out.append("")
     for cat in card.categories:
         out.append(f"    {cat.name.ljust(32)} {s.grade(cat.grade.ljust(3))} {_counts_line(cat.counts, s) if cat.counts else ''}")

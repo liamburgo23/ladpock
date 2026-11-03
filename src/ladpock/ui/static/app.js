@@ -1054,6 +1054,8 @@ function drawFindings(container, projectId, data, summary) {
     title: c.grade === "A+" ? `${c.name}: no open findings` : `Why ${c.name} is ${c.grade}, and how to fix it` },
     h("span", { class: "label" }, c.name), gradeEl(c.grade)))),
     h("p", { class: "faint" }, "Click any grade to see where the points went and how to reach A+."));
+  if (summary.changes) container.append(changesCard(summary.changes, data.scan));
+  const newRefs = new Set((summary.changes && summary.changes.new) || []);
 
   const scanners = (summary.scanners || []).map((s) => !s.available ? `${s.name} not installed` : s.ran ? `${s.name} ran` : `${s.name} failed`);
   const info = [`Built-in: ${summary.checks_run ?? "?"} checks`, ...scanners, `${summary.dependencies ?? 0} dependencies checked`];
@@ -1086,7 +1088,7 @@ function drawFindings(container, projectId, data, summary) {
       && (!q || [f.title, f.file, f.check_id, f.message, f.snippet].some((v) => (v || "").toLowerCase().includes(q))));
     const groups = SEVERITIES.map((sev) => [sev, shown.filter((f) => f.severity === sev)]).filter(([, items]) => items.length);
     list.replaceChildren(...(groups.length ? groups.flatMap(([sev, items]) => [
-      h("div", { class: "group-head" }, `${sev} (${items.length})`), ...items.map((f) => findingEl(f, projectId, data.ai.verdicts[f.ref]))])
+      h("div", { class: "group-head" }, `${sev} (${items.length})`), ...items.map((f) => findingEl(f, projectId, data.ai.verdicts[f.ref], newRefs.has(f.ref)))])
       : [h("p", { class: "faint", style: "padding:16px 20px" }, "Nothing matches these filters.")]));
   };
   const filters = SEVERITIES.filter((s) => counts[s]).map((sev) => h("button", { class: `filter sev-${sev}`, "aria-pressed": "true", onclick: (ev) => {
@@ -1105,7 +1107,26 @@ function drawFindings(container, projectId, data, summary) {
   draw();
 }
 
-function findingEl(f, projectId, verdict) {
+function changesCard(c, scan) {
+  const delta = scan.score - (c.previous_score || 0);
+  const fixed = c.fixed || [];
+  const where = (f) => (f.file ? `${f.file}${f.line ? `:${f.line}` : ""}` : "");
+  return h("section", { class: "card changes", "aria-label": "Since the last scan" },
+    h("div", { class: "row spread" },
+      h("div", { class: "row" }, h("strong", null, "Since the last scan"), h("span", { class: "faint" }, ago(c.previous_at))),
+      h("div", { class: "row" }, gradeEl(c.previous_grade), h("span", { class: "arrow" }, "→"), gradeEl(scan.grade),
+        h("span", { class: delta > 0 ? "cell-yes" : delta < 0 ? "cell-no" : "faint" }, `${delta > 0 ? "+" : ""}${delta} points`))),
+    h("p", null, h("span", { class: c.fixed_count ? "cell-yes" : "faint" }, `${plural(c.fixed_count, "finding")} fixed`), " · ",
+      h("span", { class: c.new.length ? "cell-mid" : "faint" }, `${c.new.length} new`),
+      c.new.length ? h("span", { class: "faint" }, " (marked New below)") : null),
+    c.same_profile ? null : h("p", { class: "faint" }, `The previous scan was ${c.previous_profile}, so some differences come from `
+      + "running a different set of checks, not from code changes."),
+    fixed.length ? h("details", null, h("summary", { class: "faint", style: "cursor:pointer" }, "What was fixed"),
+      h("ul", { class: "fixed-list" }, fixed.map((f) => h("li", null, sevPill(f.severity), " ", f.title, " ",
+        h("span", { class: "mono faint" }, where(f)))))) : null);
+}
+
+function findingEl(f, projectId, verdict, isNew) {
   const actions = h("div", { class: "row" });
   const fixBtn = h("button", { class: "btn small", onclick: async () => {
     const res = await api("GET", `/api/projects/${projectId}/fix-prompt?ref=${encodeURIComponent(f.ref)}`);
@@ -1134,7 +1155,8 @@ function findingEl(f, projectId, verdict) {
   actions.append(fixBtn, acceptBtn);
 
   const details = h("details", { class: "finding" },
-    h("summary", null, sevPill(f.severity), h("span", { class: "title" }, f.title),
+    h("summary", null, sevPill(f.severity), isNew ? h("span", { class: "chip accent" }, "New") : null,
+      h("span", { class: "title" }, f.title),
       f.file ? h("span", { class: "mono faint" }, f.line ? `${f.file}:${f.line}` : f.file) : null),
     h("div", { class: "body" },
       f.snippet ? h("div", { class: "snippet" }, f.snippet) : null,

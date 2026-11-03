@@ -132,6 +132,10 @@ def call_tool(db: DB, name: str, args: dict) -> str:
         card = result.scorecard
         head = (f"{root.name}: grade {card.grade} ({card.overall}/100), {len(result.findings)} finding(s)"
                 + (f", {len(findings)} in the requested files" if wanted else "") + ".")
+        if result.changes:
+            c = result.changes
+            head += (f" Since the previous scan: {c['previous_grade']} -> {card.grade}, {c['fixed_count']} fixed, "
+                     f"{len(c['new'])} new.")
         return f"{head}\n{_format_findings(findings)}\n\nCall ladpock_explain_grade for the path to A+."
     if name == "ladpock_findings":
         root, findings, scan = _latest(db, args["path"])
