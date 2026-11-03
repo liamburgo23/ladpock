@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from .models import CATEGORIES, Finding, Severity
 
 WEIGHTS = {Severity.CRITICAL: 40, Severity.HIGH: 20, Severity.MEDIUM: 8, Severity.LOW: 2, Severity.INFO: 0}
+CATEGORY_FLOOR = {Severity.MEDIUM: 70, Severity.LOW: 83, Severity.INFO: 100}
 _GRADES = [
     (97, "A+"), (93, "A"), (90, "A-"), (87, "B+"), (83, "B"), (80, "B-"),
     (77, "C+"), (73, "C"), (70, "C-"), (67, "D+"), (63, "D"), (60, "D-"),
@@ -58,6 +59,10 @@ def score(findings: list[Finding], categories: set[str] | None = None) -> Scorec
             continue
         in_cat = [f for f in findings if f.category == key]
         value = max(0, round(100 - sum(weight(f) for f in in_cat)))
+        # Many small issues shouldn't fail a category on their own: only critical or high findings can
+        # take it below C-, and only medium ones below B.
+        worst_in_cat = max((f.severity for f in in_cat), default=Severity.INFO)
+        value = max(value, CATEGORY_FLOOR.get(worst_in_cat, 0))
         cats.append(CategoryScore(key, CATEGORIES[key], value, grade(value), _counts(in_cat)))
 
     overall = round(sum(c.score for c in cats) / len(cats)) if cats else 100

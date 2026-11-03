@@ -68,7 +68,8 @@ def pending_units(db: DB, project_id: int, model: str) -> tuple[list[Unit], list
 
 def run_review(db: DB, project_id: int, client: OllamaClient, *, deadline: datetime | None = None,
                should_stop: Callable[[], bool] = lambda: False, log: Callable[[str], None] = print,
-               trigger: str = "manual", require_ac: bool = False, max_units: int | None = None) -> ReviewSummary:
+               trigger: str = "manual", require_ac: bool = False, max_units: int | None = None,
+               progress: Callable[[int, int], None] = lambda _done, _total: None) -> ReviewSummary:
     row = db.get_project_by_id(project_id)
     if not row:
         raise ValueError("Project not found")
@@ -91,7 +92,9 @@ def run_review(db: DB, project_id: int, client: OllamaClient, *, deadline: datet
     run_id = db.ai_run_start(project_id, client.model or "", trigger, len(units), summary.cached)
 
     try:
-        _review_all(db, project_id, client, todo, summary, run_id, deadline, should_stop, require_ac, log, known)
+        progress(0, len(todo))
+        _review_all(db, project_id, client, todo, summary, run_id, deadline, should_stop, require_ac, log, known,
+                    progress)
     except KeyboardInterrupt:
         summary.status, summary.message = "stopped", "Stopped with Ctrl+C; the next run continues from here"
         raise
@@ -107,7 +110,8 @@ def run_review(db: DB, project_id: int, client: OllamaClient, *, deadline: datet
 
 def _review_all(db: DB, project_id: int, client: OllamaClient, todo: list[Unit], summary: ReviewSummary, run_id: int,
                 deadline: datetime | None, should_stop: Callable[[], bool], require_ac: bool,
-                log: Callable[[str], None], known: dict[str, set[tuple[int, str]]]) -> None:
+                log: Callable[[str], None], known: dict[str, set[tuple[int, str]]],
+                progress: Callable[[int, int], None]) -> None:
     consecutive_errors = 0
     for i, unit in enumerate(todo, 1):
         if should_stop():
@@ -132,6 +136,7 @@ def _review_all(db: DB, project_id: int, client: OllamaClient, todo: list[Unit],
                 return
             continue
         summary.done += 1
+        progress(i, len(todo))
         log(f"  [{i}/{len(todo)}] {unit.title} ({time.monotonic() - started:.0f}s)")
         db.ai_run_update(run_id, done=summary.done, leads=summary.leads, dropped=summary.dropped,
                          rejected=summary.rejected, errors=summary.errors)

@@ -60,6 +60,38 @@ def cmd_scan(args, db: DB) -> int:
     return 0
 
 
+def cmd_full_check(args, db: DB) -> int:
+    from .ai import settings as ai_settings
+    from .ai.client import LocalModelError
+    from .ai.review import run_review
+
+    if args.all_projects:
+        roots = [Path(p["path"]) for p in db.list_projects() if Path(p["path"]).is_dir()]
+        if not roots:
+            print("No projects yet. Add one with: ladpock projects add <folder>", file=sys.stderr)
+            return 2
+    else:
+        roots = [Path(args.path).resolve()]
+    client = None
+    if not args.no_ai:
+        try:
+            client = ai_settings.make_client(db)
+        except LocalModelError as exc:
+            print(f"Local AI review will be skipped: {exc}", file=sys.stderr)
+    style = _style(args)
+    for i, root in enumerate(roots, 1):
+        print(style.bold(f"[{i}/{len(roots)}] {root.name}: full scan"), file=sys.stderr)
+        result = run_scan(root, db, profile="full", offline=args.offline)
+        line = f"{root.name}: grade {result.scorecard.grade} ({result.scorecard.overall}/100), {len(result.findings)} findings"
+        if client:
+            print(style.bold(f"[{i}/{len(roots)}] {root.name}: local AI review with {client.model}"), file=sys.stderr)
+            summary = run_review(db, result.project_id, client, log=lambda m: print(m, file=sys.stderr))
+            line += f", {summary.leads} new AI lead(s)"
+        print(line)
+    print("\nDetails: ladpock scan <folder>, ladpock ai leads <folder>, or open the dashboard with: ladpock ui")
+    return 0
+
+
 def cmd_routes(args, db: DB) -> int:
     index = FileIndex(args.path)
     routes = analyze(index)
@@ -213,10 +245,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("status", help="refresh feeds and show new advisories for your projects (the default)")
 
-    scan = sub.add_parser("scan", help="scan a project folder")
+    scan = sub.add_parser(
+        "scan", help="scan a project folder",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description="Profiles:\n"
+                    "  quick     leaked keys and passwords, committed .env files, known-vulnerable dependencies. Seconds.\n"
+                    "  standard  everything in quick plus every code check (sign-in, access control, routes and\n"
+                    "            commands, injection, payments, config, AI code smells), installed scanners, and a\n"
+                    "            check that your packages really exist. The default.\n"
+                    "  full      everything in standard plus a search of git history for deleted secrets (Gitleaks).\n"
+                    "None of them run your code. For everything including the local AI review: ladpock full-check",
+    )
     scan.add_argument("path", nargs="?", default=".")
     scan.add_argument("--profile", choices=sorted(PROFILES), default="standard",
-                      help="quick = secrets and dependencies; standard = everything; full = also git history")
+                      help="how much to check (see the profiles above; default standard)")
     scan.add_argument("--format", choices=["text", "json", "sarif"], default="text")
     scan.add_argument("--output", "-o", help="write the report to a file")
     scan.add_argument("--no-external", action="store_true", help="only run LadPock's built-in checks")
@@ -224,6 +266,11 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--human", action="store_true", help="show the 'needs a human' checklist")
     scan.add_argument("--fail-on", choices=[s.label for s in Severity if s > Severity.INFO],
                       help="exit with code 1 if anything at or above this severity is found (for CI)")
+
+    full = sub.add_parser("full-check", help="everything: a full scan, then the local AI review if a model is installed")
+    full.add_argument("path", nargs="?", default=".")
+    full.add_argument("--all-projects", action="store_true", help="check every project LadPock knows about")
+    full.add_argument("--no-ai", action="store_true", help="skip the local AI review")
 
     routes = sub.add_parser("routes", help="show the route matrix (Next.js) and command matrix (Tauri)")
     routes.add_argument("path", nargs="?", default=".")
@@ -263,7 +310,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 COMMANDS = {
-    None: cmd_status, "status": cmd_status, "scan": cmd_scan, "routes": cmd_routes, "fix-prompt": cmd_fix_prompt,
+    None: cmd_status, "status": cmd_status, "scan": cmd_scan, "full-check": cmd_full_check, "routes": cmd_routes,
+    "fix-prompt": cmd_fix_prompt,
     "advisories": cmd_advisories, "suppress": cmd_suppress, "projects": cmd_projects, "checks": cmd_checks,
     "doctor": cmd_doctor, "ui": cmd_ui, "ai": lambda args, db: _ai_run(args, db),
 }

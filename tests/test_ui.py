@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import http.client
 import json
+import os
 import threading
 import time
 import unittest
@@ -147,6 +148,54 @@ class DashboardServer(unittest.TestCase):
                 self.assertIsNone(db.get_project_by_id(pid))
             finally:
                 db.close()
+
+    def wait_for(self, job_id):
+        job = {}
+        for _ in range(200):
+            _, job = self.api("GET", f"/api/jobs/{job_id}")
+            if job["status"] != "running":
+                return job
+            time.sleep(0.1)
+        return job
+
+    def test_full_check_reports_steps_and_blocks_overlapping_work(self):
+        os.environ["LADPOCK_OLLAMA_URL"] = "http://127.0.0.1:9"  # nothing listens here: the AI step is skipped
+        try:
+            with materialize("vuln-next-supabase") as tmp:
+                root = Path(tmp) / "vuln-next-supabase"
+                _, added = self.api("POST", "/api/projects", {"path": str(root)})
+                pid = added["id"]
+                _, project = self.api("GET", f"/api/projects/{pid}")
+                profiles = project["profiles"]
+                self.assertLess(profiles["quick"]["checks"], profiles["standard"]["checks"])
+                self.assertTrue(profiles["full"]["history"])
+
+                status, started = self.api("POST", f"/api/projects/{pid}/full-check", {"offline": True})
+                self.assertEqual(status, 202)
+                again = self.api("POST", f"/api/projects/{pid}/full-check", {"offline": True})[1]
+                self.assertEqual(again["job"], started["job"])  # pressing twice shows the same task
+                job = self.wait_for(started["job"])
+                self.assertEqual(job["status"], "done", job.get("error"))
+                self.assertEqual(job["steps"][-1], "Local AI review")
+                self.assertEqual(job["result"]["ai"], "unavailable")
+                self.assertEqual(job["result"]["grade"], "F")
+                self.assertIsNotNone(job["finished_at"])
+
+                _, listing = self.api("GET", "/api/jobs")
+                self.assertIn(started["job"], [j["id"] for j in listing["jobs"]])
+                self.assertTrue(all(len(j["log"]) <= 3 for j in listing["jobs"]))
+        finally:
+            os.environ.pop("LADPOCK_OLLAMA_URL", None)
+
+    def test_one_task_per_project(self):
+        with materialize("clean-next-supabase") as tmp:
+            root = Path(tmp) / "clean-next-supabase"
+            pid = self.api("POST", "/api/projects", {"path": str(root)})[1]["id"]
+            first = self.api("POST", f"/api/projects/{pid}/scan", {"offline": True, "external": False})
+            second = self.api("POST", f"/api/projects/{pid}/full-check", {"offline": True, "ai": False})
+            if second[0] == 409:  # the scan was still running, as expected on most machines
+                self.assertIn("Wait for", second[1]["error"])
+            self.wait_for(first[1]["job"])
 
     def test_browse_lists_folders_only(self):
         with materialize("clean-next-supabase") as tmp:

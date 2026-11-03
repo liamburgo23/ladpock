@@ -71,8 +71,16 @@ pip install .
 ladpock ui
 ```
 
-This opens LadPock in your browser. You can add projects by picking their folders, run scans with Quick, Standard
-or Full profiles, and browse findings by severity with filters and search. Each finding has a copy-fix-prompt button
+This opens LadPock in your browser. You can add projects by picking their folders and press **Run full check** to
+run everything LadPock can do on that project: the Full scan, then the local AI review if you have a model. Or
+press **Check all projects** to do that for every project. You can also run a single Quick, Standard or Full scan;
+the page explains exactly what each one checks and how many checks apply to your project.
+
+While anything runs, the top bar shows what's running and how far along it is (click it for details and a Stop
+button). The project page shows a progress banner with the current step. When a task finishes, a message tells you
+the result and the page refreshes. A **Help** page explains grades, profiles, the AI review and the data sources.
+
+You can browse findings by severity, with filters and search. Each finding has a copy-fix-prompt button
 and an "accept risk" option that needs a reason and expires. There are also tabs for the Next.js route matrix,
 vulnerable dependencies (with "actively exploited" flags), the "needs a human" checklist (LadPock remembers what
 you've ticked) and scan history. Vulnerability data refreshes every time you open it, and a banner lists anything
@@ -143,6 +151,7 @@ you've scanned before.
 | Command | What it does |
 |---|---|
 | `ladpock ui` | Open the dashboard (`--port`, `--no-browser`) |
+| `ladpock full-check [path]` | Everything: a Full scan, then the local AI review (`--all-projects`, `--no-ai`) |
 | `ladpock scan [path]` | Scan a project (`--profile quick\|standard\|full`, `--format text\|json\|sarif`, `-o file`) |
 | `ladpock` / `ladpock status` | Refresh feeds, show new advisories and your projects' grades |
 | `ladpock routes [path]` | Show the Next.js route matrix |

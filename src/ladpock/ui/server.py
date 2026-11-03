@@ -41,7 +41,7 @@ from ..files import FileIndex
 from ..human import items_for
 from ..models import CATEGORIES
 from ..routes import analyze, gaps
-from ..scan import PROFILES, refresh_all_projects, run_scan
+from ..scan import PROFILES, SCAN_STEPS, profile_summary, refresh_all_projects, run_scan
 from ..stack import coverage
 from ..timeutil import iso
 
@@ -68,16 +68,40 @@ class ApiError(Exception):
         self.status = status
 
 
+AI_KINDS = {"ai", "full", "full-all", "benchmark"}  # these use the GPU, so only one runs at a time
+
+
 @dataclass
 class Job:
     id: str
     project_id: int | None
-    kind: str = "scan"  # scan | ai | benchmark
+    kind: str = "scan"  # scan | ai | benchmark | full | full-all
+    title: str = ""
+    steps: list[str] = field(default_factory=list)
+    step: int = 0  # index into steps
+    fraction: float | None = None  # progress within the current step, when known
     status: str = "running"  # running | done | error
     log: list[str] = field(default_factory=list)
     error: str | None = None
     result: dict | None = None
+    started_at: str = field(default_factory=iso)
+    finished_at: str | None = None
     stop: threading.Event = field(default_factory=threading.Event)
+
+    def enter(self, name: str) -> None:
+        """Move to the named step (adding it if this job didn't plan for it)."""
+        if name not in self.steps:
+            self.steps.append(name)
+        self.step = self.steps.index(name)
+        self.fraction = None
+
+    def to_dict(self) -> dict:
+        return {
+            "id": self.id, "kind": self.kind, "project_id": self.project_id, "title": self.title,
+            "steps": self.steps, "step": self.step, "fraction": self.fraction, "status": self.status,
+            "log": self.log[-50:], "error": self.error, "result": self.result, "started_at": self.started_at,
+            "finished_at": self.finished_at, "stopping": self.stop.is_set(),
+        }
 
 
 class App:
@@ -102,13 +126,24 @@ class App:
 
     # jobs
 
-    def start_job(self, kind: str, project_id: int | None, work: Callable[[DB, Job], dict]) -> Job:
-        """Run work(db, job) on a background thread; one running job per kind and project."""
+    def start_job(self, kind: str, project_id: int | None, title: str, steps: list[str],
+                  work: Callable[[DB, Job], dict]) -> Job:
+        """Run work(db, job) on a background thread.
+
+        One job per project at a time (a scan and an AI review of the same code would trip over each other),
+        and one GPU job at a time across all projects.
+        """
         with self.jobs_lock:
-            for job in self.jobs.values():
-                if job.kind == kind and job.project_id == project_id and job.status == "running":
-                    return job
-            job = Job(uuid.uuid4().hex, project_id, kind)
+            running = [j for j in self.jobs.values() if j.status == "running"]
+            for job in running:
+                if job.kind == kind and job.project_id == project_id:
+                    return job  # pressing the button twice just shows the same job
+            for job in running:
+                if (project_id is not None and job.project_id == project_id) or "full-all" in (kind, job.kind):
+                    raise ApiError(409, f"Wait for \"{job.title}\" to finish first")
+                if kind in AI_KINDS and job.kind in AI_KINDS:
+                    raise ApiError(409, f"The local model is busy with \"{job.title}\". Try again when it finishes")
+            job = Job(uuid.uuid4().hex, project_id, kind, title, list(steps))
             self.jobs[job.id] = job
 
         def run() -> None:
@@ -120,23 +155,60 @@ class App:
                 job.error = f"{type(exc).__name__}: {exc}"
                 job.status = "error"
             finally:
+                job.finished_at = iso()
                 db.close()
 
         threading.Thread(target=run, name=f"ladpock-{kind}-{job.id[:8]}", daemon=True).start()
         return job
 
-    def start_scan(self, project_id: int, path: str, options: dict) -> Job:
+    def start_scan(self, project_id: int, name: str, path: str, options: dict) -> Job:
         def work(db: DB, job: Job) -> dict:
-            result = run_scan(path, db, log=job.log.append, **options)
-            return {"project_id": result.project_id, "grade": result.scorecard.grade,
-                    "score": result.scorecard.overall, "findings": len(result.findings)}
+            result = run_scan(path, db, log=job.log.append, step=job.enter, **options)
+            return _scan_result(result)
 
-        return self.start_job("scan", project_id, work)
+        profile = options.get("profile", "standard")
+        return self.start_job("scan", project_id, f"{profile.capitalize()} scan of {name}", list(SCAN_STEPS), work)
 
-    def running_job(self, project_id: int, kind: str = "scan") -> Job | None:
+    def running_job(self, project_id: int, kind: str | None = None) -> Job | None:
         with self.jobs_lock:
-            return next((j for j in self.jobs.values()
-                         if j.project_id == project_id and j.kind == kind and j.status == "running"), None)
+            return next((j for j in self.jobs.values() if j.project_id == project_id and j.status == "running"
+                         and (kind is None or j.kind == kind)), None)
+
+    def recent_jobs(self, limit: int = 20) -> list[Job]:
+        with self.jobs_lock:
+            jobs = sorted(self.jobs.values(), key=lambda j: j.started_at, reverse=True)
+        return jobs[:limit]
+
+
+def _scan_result(result) -> dict:
+    return {"project_id": result.project_id, "grade": result.scorecard.grade, "score": result.scorecard.overall,
+            "findings": len(result.findings)}
+
+
+def full_check(db: DB, job: Job, project_id: int, ai: bool, prefix: str = "", offline: bool = False) -> dict:
+    """Every check LadPock has on this computer: a full scan, then the local AI review if a model is available."""
+    row = db.get_project_by_id(project_id)
+    label = (lambda name: f"{prefix}{name}") if prefix else (lambda name: name)
+    result = run_scan(row["path"], db, profile="full", offline=offline, log=job.log.append,
+                      step=lambda name: job.enter(label(name)))
+    out = {"project_id": project_id, "name": row["name"], **_scan_result(result), "ai": "skipped"}
+    if not ai or job.stop.is_set():
+        return out
+    job.enter(label("Local AI review"))
+    try:
+        client = ai_settings.make_client(db)
+    except LocalModelError as exc:
+        job.log.append(f"Local AI review skipped: {exc}")
+        out["ai"] = "unavailable"
+        return out
+
+    def progress(done: int, total: int) -> None:
+        job.fraction = done / total if total else 1.0
+
+    summary = ai_review.run_review(db, project_id, client, should_stop=job.stop.is_set, log=job.log.append,
+                                   progress=progress)
+    out.update(ai=summary.status, leads=summary.leads)
+    return out
 
 
 # payload builders
@@ -156,10 +228,18 @@ def _feed_status(db: DB) -> list[dict]:
         return db.get_feed(name)
 
     kev_row, epss_row = row(kev.NAME), row(epss.NAME)
+    epss_note = None
+    if not (epss_row and epss_row["fetched_at"]):
+        # EPSS is only looked up for CVEs your dependencies actually have; none means nothing to fetch.
+        has_cves = any(h.cves for h in advisories.hits(db, {}))
+        epss_note = None if has_cves else "nothing to look up"
     return [
-        {"name": "OSV", "updated": db.get_meta("osv_checked_at"), "error": None},
-        {"name": "CISA KEV", "updated": kev_row["fetched_at"] if kev_row else None, "error": kev_row["error"] if kev_row else None},
-        {"name": "EPSS", "updated": epss_row["fetched_at"] if epss_row else None, "error": epss_row["error"] if epss_row else None},
+        {"name": "OSV", "updated": db.get_meta("osv_checked_at"), "error": None,
+         "about": "Known vulnerabilities in open-source packages, matched against your lockfiles."},
+        {"name": "CISA KEV", "updated": kev_row["fetched_at"] if kev_row else None, "error": kev_row["error"] if kev_row else None,
+         "about": "The US government's list of vulnerabilities attackers are actively exploiting."},
+        {"name": "EPSS", "updated": epss_row["fetched_at"] if epss_row else None, "error": epss_row["error"] if epss_row else None,
+         "note": epss_note, "about": "The chance a vulnerability gets exploited in the next 30 days."},
     ]
 
 
@@ -208,8 +288,8 @@ def project_payload(app: App, db: DB, project_id: int) -> dict:
         "history": [{"started_at": s["started_at"], "grade": s["grade"], "score": s["score"], "profile": s["profile"]}
                     for s in db.scan_history(project_id, 20)],
         "human": [{"id": i, "text": t, "checked_at": checked.get(i)} for i, t in items_for(set(stack))],
-        "job": job.id if job else None,
-        "profiles": sorted(PROFILES),
+        "job": job.to_dict() if job else None,
+        "profiles": profile_summary(stack),
         "categories": CATEGORIES,
         "ai": ai_payload(app, db, project_id, row),
     }
@@ -442,7 +522,7 @@ def api_scan(app, db, match, query, body):
         raise ApiError(400, "Unknown profile")
     options = {"profile": profile, "offline": _bool(body, "offline"), "external": _bool(body, "external", True),
                "history": True if _bool(body, "history") else None}
-    job = app.start_scan(row["id"], row["path"], options)
+    job = app.start_scan(row["id"], row["name"], row["path"], options)
     return 202, {"job": job.id}
 
 
@@ -450,8 +530,50 @@ def api_job(app, db, match, query, body):
     job = app.jobs.get(match.group(1))
     if not job:
         raise ApiError(404, "Unknown job")
-    return 200, {"id": job.id, "kind": job.kind, "status": job.status, "log": job.log[-50:], "error": job.error,
-                 "result": job.result, "stopping": job.stop.is_set()}
+    return 200, job.to_dict()
+
+
+def api_jobs(app, db, match, query, body):
+    """Running and recent jobs, for the activity indicator."""
+    jobs = []
+    for job in app.recent_jobs():
+        item = job.to_dict()
+        item["log"] = item["log"][-3:]
+        jobs.append(item)
+    return 200, {"jobs": jobs}
+
+
+def api_full_check(app, db, match, query, body):
+    project_id = _project_id(match)
+    row = db.get_project_by_id(project_id)
+    if not row or not Path(row["path"]).is_dir():
+        raise ApiError(404, "Project folder not found")
+    ai, offline = _bool(body, "ai", True), _bool(body, "offline")
+    steps = list(SCAN_STEPS) + (["Local AI review"] if ai else [])
+    job = app.start_job("full", project_id, f"Full check of {row['name']}", steps,
+                        lambda db, job: full_check(db, job, project_id, ai, offline=offline))
+    return 202, {"job": job.id}
+
+
+def api_full_check_all(app, db, match, query, body):
+    projects = [p for p in db.list_projects() if Path(p["path"]).is_dir()]
+    if not projects:
+        raise ApiError(400, "Add a project first")
+    ai, offline = _bool(body, "ai", True), _bool(body, "offline")
+    per_project = list(SCAN_STEPS) + (["Local AI review"] if ai else [])
+    steps = [f"{p['name']}: {s}" for p in projects for s in per_project]
+
+    def work(db: DB, job: Job) -> dict:
+        results = []
+        for i, project in enumerate(projects):
+            if job.stop.is_set():
+                break
+            job.log.append(f"== {project['name']} ({i + 1} of {len(projects)})")
+            results.append(full_check(db, job, project["id"], ai, prefix=f"{project['name']}: ", offline=offline))
+        return {"projects": results}
+
+    job = app.start_job("full-all", None, f"Full check of all {len(projects)} projects", steps, work)
+    return 202, {"job": job.id}
 
 
 def api_job_stop(app, db, match, query, body):
@@ -496,7 +618,9 @@ def api_ai_benchmark(app, db, match, query, body):
                                                                           result["output_rate"], client.think))
         return result
 
-    return 202, {"job": app.start_job("benchmark", project_id if isinstance(project_id, int) else None, work).id}
+    job = app.start_job("benchmark", project_id if isinstance(project_id, int) else None, "Timing the local model",
+                        ["Loading the model and timing a sample"], work)
+    return 202, {"job": job.id}
 
 
 def api_ai_run(app, db, match, query, body):
@@ -504,19 +628,23 @@ def api_ai_run(app, db, match, query, body):
     row = db.get_project_by_id(project_id)
     if not row or not Path(row["path"]).is_dir():
         raise ApiError(404, "Project folder not found")
-    if app.running_job(project_id, "scan"):
-        raise ApiError(409, "Wait for the scan to finish first")
     max_minutes = body.get("max_minutes")
     if max_minutes is not None and (not isinstance(max_minutes, int) or not 1 <= max_minutes <= 1440):
         raise ApiError(400, "max_minutes must be between 1 and 1440")
 
     def work(db: DB, job: Job) -> dict:
         client = ai_settings.make_client(db)
-        summary = ai_review.run_review(db, project_id, client, deadline=ai_system.deadline_from(None, max_minutes),
-                                       should_stop=job.stop.is_set, log=job.log.append)
-        return {k: getattr(summary, k) for k in ("status", "total", "cached", "done", "leads", "dropped", "errors", "message")}
 
-    return 202, {"job": app.start_job("ai", project_id, work).id}
+        def progress(done: int, total: int) -> None:
+            job.fraction = done / total if total else 1.0
+
+        summary = ai_review.run_review(db, project_id, client, deadline=ai_system.deadline_from(None, max_minutes),
+                                       should_stop=job.stop.is_set, log=job.log.append, progress=progress)
+        return {k: getattr(summary, k) for k in ("status", "total", "cached", "done", "leads", "dropped", "rejected",
+                                                 "errors", "message")}
+
+    job = app.start_job("ai", project_id, f"Local AI review of {row['name']}", ["Local AI review"], work)
+    return 202, {"job": job.id}
 
 
 def api_ai_nightly(app, db, match, query, body):
@@ -641,6 +769,9 @@ ROUTES: list[tuple[str, re.Pattern[str], Callable]] = [
     ("GET", re.compile(r"/api/browse"), api_browse),
     ("GET", re.compile(r"/api/checks"), api_checks),
     ("POST", re.compile(r"/api/jobs/([0-9a-f]{32})/stop"), api_job_stop),
+    ("GET", re.compile(r"/api/jobs"), api_jobs),
+    ("POST", re.compile(r"/api/projects/(\d+)/full-check"), api_full_check),
+    ("POST", re.compile(r"/api/full-check"), api_full_check_all),
     ("GET", re.compile(r"/api/ai"), api_ai_status),
     ("POST", re.compile(r"/api/ai/settings"), api_ai_settings),
     ("POST", re.compile(r"/api/ai/benchmark"), api_ai_benchmark),

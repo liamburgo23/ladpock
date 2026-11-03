@@ -4,13 +4,16 @@
 // built with textContent (see h()). Never use innerHTML with data.
 
 const SEVERITIES = ["critical", "high", "medium", "low", "info"];
-const PROFILES = {
-  quick: "Secrets and dependencies only. Seconds.",
-  standard: "Every check, plus installed scanners and live vulnerability data.",
-  full: "Standard, plus a search of git history for secrets (needs Gitleaks).",
+const PROFILE_INFO = {
+  quick: { label: "Quick", time: "Seconds", best: "A fast check before you commit or deploy",
+    looks: "Leaked keys and passwords, committed .env files, and known vulnerabilities in your dependencies." },
+  standard: { label: "Standard", time: "Usually under a minute", best: "Everyday use (the default)",
+    looks: "Everything in Quick, plus every code check: sign-in, access control, routes and commands, injection, payments, config and AI code smells, and a check that your packages really exist." },
+  full: { label: "Full", time: "Longer on big repositories", best: "Before a release, or weekly",
+    looks: "Everything in Standard, plus a search of git history for secrets that were committed and later deleted (needs Gitleaks)." },
 };
 const memory = {};
-const state = { token: null, status: null, refreshing: false, refreshed: false, poll: null, view: 0 };
+const state = { token: null, status: null, refreshing: false, refreshed: false, poll: null, view: 0, dismissed: new Set() };
 
 // ---------- small helpers ----------
 
@@ -128,9 +131,13 @@ function drawFeeds() {
     el.replaceChildren(h("span", { class: "feed" }, h("span", { class: "dot busy" }), "Updating vulnerability data…"));
     return;
   }
-  const parts = state.status.feeds.map((f) => h("span", { class: "feed", title: f.error || "" },
-    h("span", { class: `dot${f.error || !f.updated ? " warn" : ""}` }), `${f.name} ${f.error ? "update failed" : ago(f.updated)}`));
-  el.replaceChildren(...parts, h("button", { class: "btn small", onclick: refreshFeeds }, "Refresh"));
+  const parts = state.status.feeds.map((f) => {
+    const text = f.error ? "update failed" : f.updated ? `updated ${ago(f.updated)}` : (f.note || "not checked yet");
+    const warn = f.error || (!f.updated && !f.note);
+    return h("a", { class: "feed", href: "#/help/data", title: `${f.about || ""}${f.error ? `\n${f.error}` : ""}` },
+      h("span", { class: `dot${warn ? " warn" : f.updated ? "" : " idle"}` }), `${f.name} ${text}`);
+  });
+  el.replaceChildren(...parts, h("button", { class: "btn small", title: "Download the latest vulnerability data now", onclick: refreshFeeds }, "Refresh"));
 }
 
 async function refreshFeeds() {
@@ -157,6 +164,8 @@ function currentRoute() {
   const project = hash.match(/^\/project\/(\d+)(?:\/(\w+))?/);
   if (project) return { name: "project", id: Number(project[1]), tab: project[2] || "findings" };
   if (hash.startsWith("/add")) return { name: "add" };
+  const help = hash.match(/^\/help(?:\/([\w-]+))?/);
+  if (help) return { name: "help", section: help[1] || null };
   return { name: "home" };
 }
 
@@ -176,6 +185,7 @@ async function route() {
     }
     if (r.name === "project") await renderProject(r.id, r.tab, view);
     else if (r.name === "add") await renderAdd(await startFolder(), view);
+    else if (r.name === "help") renderHelp(r.section);
     else await renderHome(view);
   } catch (e) {
     if (e.status === 401) return;
@@ -184,10 +194,180 @@ async function route() {
   }
 }
 
+function helpLink(section, text) {
+  return h("a", { class: "help-inline", href: `#/help/${section}` }, text || "What's this?");
+}
+
+// ---------- background tasks: what's running, what finished ----------
+
+const jobs = { list: [], seen: new Map(), timer: null, started: false, open: false };
+const STOPPABLE = new Set(["ai", "full", "full-all"]);
+
+async function pollJobs() {
+  clearTimeout(jobs.timer);
+  let data;
+  try { data = await api("GET", "/api/jobs"); } catch (e) { jobs.timer = setTimeout(pollJobs, 10000); return; }
+  const first = !jobs.started;
+  jobs.started = true;
+  for (const j of data.jobs) {
+    const before = jobs.seen.get(j.id);
+    jobs.seen.set(j.id, j.status);
+    // Announce jobs that finished since the last look (including ones that started and finished in between).
+    if (!first && j.status !== "running" && (before === "running" || before === undefined)) jobFinished(j);
+  }
+  jobs.list = data.jobs;
+  const running = data.jobs.filter((j) => j.status === "running");
+  document.title = running.length ? "● Running · LadPock" : "LadPock";
+  drawActivity();
+  drawJobBanner();
+  if (currentRoute().name === "home") drawHomeBadges();
+  jobs.timer = setTimeout(pollJobs, running.length ? 1000 : 6000);
+}
+
+async function startTask(path, body) {
+  try {
+    await api("POST", path, body || {});
+    pollJobs();
+    return true;
+  } catch (e) {
+    toast(e.message);
+    return false;
+  }
+}
+
+function jobProgress(j) {
+  const n = Math.max(1, j.steps.length);
+  const pct = j.status === "running" ? Math.min(99, Math.round(100 * (j.step + (j.fraction || 0)) / n)) : 100;
+  const stepName = j.steps[j.step] || "Starting";
+  const within = j.fraction != null ? ` (${Math.round(j.fraction * 100)}%)` : "";
+  return { pct, label: `Step ${Math.min(j.step + 1, n)} of ${n}: ${stepName}${within}` };
+}
+
+function progressBar(pct) {
+  return h("div", { class: "bar", role: "progressbar", "aria-valuenow": pct, "aria-valuemin": 0, "aria-valuemax": 100 },
+    h("span", { style: `width:${pct}%` }));
+}
+
+function stopButton(j) {
+  if (!STOPPABLE.has(j.kind)) return null;
+  if (j.stopping) return h("span", { class: "faint" }, "Stopping after the current step…");
+  return h("button", { class: "btn small", onclick: async (ev) => {
+    ev.preventDefault();
+    ev.currentTarget.textContent = "Stopping…";
+    await api("POST", `/api/jobs/${j.id}/stop`);
+    pollJobs();
+  } }, "Stop");
+}
+
+function finishMessage(j) {
+  if (j.status === "error") return `${j.title} failed: ${j.error}`;
+  const r = j.result || {};
+  if (j.kind === "full-all") {
+    const grades = (r.projects || []).map((p) => `${p.name} ${p.grade}`).join(", ");
+    return `${j.title} finished${grades ? `: ${grades}` : ""}`;
+  }
+  if (j.kind === "benchmark") return `${j.title} finished`;
+  const bits = [];
+  if (r.grade) bits.push(`grade ${r.grade}`);
+  if (r.findings != null) bits.push(plural(r.findings, "finding"));
+  if (r.leads != null) bits.push(plural(r.leads, "new AI lead"));
+  if (r.ai === "unavailable") bits.push("AI review skipped (no local model)");
+  if (r.status === "stopped" || r.ai === "stopped") bits.push("stopped early; the next run continues from there");
+  if (r.status === "paused") bits.push(r.message || "paused");
+  return `${j.title} finished${bits.length ? ": " + bits.join(", ") : ""}`;
+}
+
+function jobFinished(j) {
+  toast(finishMessage(j));
+  const r = currentRoute();
+  if (r.name === "project" && (j.project_id === r.id || j.kind === "full-all")) renderProject(r.id, r.tab, state.view);
+  else if (r.name === "home") renderHome(state.view);
+}
+
+function jobLink(j) {
+  return j.project_id ? h("a", { href: `#/project/${j.project_id}` }, j.title) : h("strong", null, j.title);
+}
+
+function drawActivity() {
+  const el = $("#activity");
+  if (!el) return;
+  const running = jobs.list.filter((j) => j.status === "running");
+  const finished = jobs.list.filter((j) => j.status !== "running" && j.finished_at);
+  const recent = finished.filter((j) => Date.now() - new Date(j.finished_at).getTime() < 15 * 60e3);
+  let summary;
+  if (running.length === 1) summary = [h("span", { class: "spinner small" }), `${running[0].title} · ${jobProgress(running[0]).pct}%`];
+  else if (running.length > 1) summary = [h("span", { class: "spinner small" }), `${running.length} tasks running`];
+  else if (recent.length) summary = [h("span", { class: `dot${recent[0].status === "error" ? " err" : ""}` }),
+    `${recent[0].status === "error" ? "Failed" : "Finished"} ${ago(recent[0].finished_at)}: ${recent[0].title}`];
+  else summary = [h("span", { class: "dot idle" }), "Nothing running"];
+  const button = h("button", { class: "activity-btn", "aria-expanded": String(jobs.open), "aria-label": "Tasks",
+    onclick: (ev) => { ev.stopPropagation(); jobs.open = !jobs.open; drawActivity(); } }, summary);
+  el.replaceChildren(...[button, jobs.open ? activityPanel(running, finished.slice(0, 8)) : null].filter(Boolean));
+}
+
+function activityPanel(running, finished) {
+  return h("div", { class: "activity-panel", onclick: (ev) => ev.stopPropagation() },
+    h("h3", null, running.length ? "Running now" : "Nothing running right now"),
+    running.map((j) => {
+      const p = jobProgress(j);
+      return h("div", { class: "activity-item" },
+        h("div", { class: "row spread" }, jobLink(j), stopButton(j)),
+        h("div", { class: "faint" }, `${p.label} · started ${ago(j.started_at)}`), progressBar(p.pct),
+        j.log.length ? h("div", { class: "faint mono log-line" }, j.log[j.log.length - 1]) : null);
+    }),
+    finished.length ? h("h3", null, "Recently finished") : null,
+    finished.map((j) => h("div", { class: "activity-item" },
+      h("div", { class: "row spread" }, jobLink(j), h("span", { class: "faint" }, ago(j.finished_at))),
+      h("div", { class: j.status === "error" ? "err-text" : "faint" }, finishMessage(j)))),
+    h("p", { class: "faint" }, "Tasks keep running if you move to another page. Closing the terminal that runs `ladpock ui` stops them. ",
+      helpLink("running", "More about tasks")));
+}
+
+document.addEventListener("click", () => {
+  if (jobs.open) { jobs.open = false; drawActivity(); }
+});
+
+function drawJobBanner() {
+  const el = $("#job-banner");
+  const r = currentRoute();
+  if (!el || r.name !== "project") return;
+  const mine = jobs.list.filter((j) => j.project_id === r.id || j.kind === "full-all");
+  const running = mine.find((j) => j.status === "running");
+  setRunButtonsBusy(Boolean(running));
+  if (running) {
+    const p = jobProgress(running);
+    el.replaceChildren(h("section", { class: "status-banner running", role: "status" },
+      h("div", { class: "row spread" }, h("div", { class: "row" }, h("span", { class: "spinner" }), h("strong", null, `Running: ${running.title}`)),
+        stopButton(running)),
+      h("div", { class: "faint" }, `${p.label} · started ${ago(running.started_at)}`), progressBar(p.pct),
+      running.log.length ? h("div", { class: "faint mono log-line" }, running.log[running.log.length - 1]) : null,
+      h("p", { class: "faint" }, "You can leave this page; progress also shows in the top bar.")));
+    return;
+  }
+  const last = mine.find((j) => j.finished_at && Date.now() - new Date(j.finished_at).getTime() < 30 * 60e3 && !state.dismissed.has(j.id));
+  if (!last) { el.replaceChildren(); return; }
+  el.replaceChildren(h("section", { class: `status-banner ${last.status === "error" ? "failed" : "done"}`, role: "status" },
+    h("div", { class: "row spread" },
+      h("strong", null, `${last.status === "error" ? "✗" : "✓"} ${finishMessage(last)}`),
+      h("button", { class: "btn small", onclick: () => { state.dismissed.add(last.id); drawJobBanner(); } }, "Dismiss")),
+    h("div", { class: "faint" }, `Finished ${ago(last.finished_at)}. The results below are up to date.`)));
+}
+
+function setRunButtonsBusy(busy) {
+  document.querySelectorAll("[data-run]").forEach((b) => {
+    b.disabled = busy;
+    b.textContent = busy ? "Running…" : b.dataset.label;
+  });
+}
+
+function runButton(label, onclick, primary) {
+  return h("button", { class: `btn${primary ? " primary" : ""}`, "data-run": "", "data-label": label, onclick }, label);
+}
+
 // ---------- home ----------
 
 async function renderHome(view) {
-  $("#app").replaceChildren(spinner("Loading your projects"));
+  if (!state.status) $("#app").replaceChildren(spinner("Loading your projects"));
   const status = await api("GET", "/api/status");
   if (view !== state.view) return;
   if (!state.refreshing) state.status = status;  // don't overwrite fresher data from an in-flight refresh
@@ -200,9 +380,15 @@ function drawHome() {
   const parts = [];
   if (s.new.length) parts.push(newBanner(s));
   const projects = s.projects;
+  const checkAll = projects.length ? runButton("Check all projects", async () => {
+    const ok = confirm(`Run a full check on all ${projects.length} projects, one after another?\n\n`
+      + "Each gets every scan check, then the local AI review if a model is installed. This can take a while; "
+      + "you can keep using your computer, watch progress in the top bar, and stop it at any time.");
+    if (ok) startTask("/api/full-check", { ai: true });
+  }) : null;
   const head = h("div", { class: "section-title" },
     h("h1", null, "Your projects"),
-    h("a", { class: "btn primary", href: "#/add" }, "+ Add project"));
+    h("div", { class: "row" }, checkAll, h("a", { class: "btn primary", href: "#/add" }, "+ Add project")));
   let body;
   if (!projects.length) {
     body = h("div", { class: "card empty" },
@@ -213,7 +399,21 @@ function drawHome() {
     body = h("div", { class: "card flush list" }, projects.map(projectRow));
   }
   $("#app").replaceChildren(h("div", { class: "stack" }, parts, head, body,
-    h("p", { class: "faint" }, "A good grade means no obvious problems were found, not that a project is guaranteed secure.")));
+    h("p", { class: "faint" }, "A good grade means no obvious problems were found, not that a project is guaranteed secure. ",
+      helpLink("grades", "How grades work"))));
+  drawHomeBadges();
+}
+
+function drawHomeBadges() {
+  const running = jobs.list.filter((j) => j.status === "running");
+  document.querySelectorAll(".job-slot").forEach((slot) => {
+    const id = Number(slot.dataset.project);
+    const job = running.find((j) => j.project_id === id);
+    const all = running.find((j) => j.kind === "full-all");
+    if (job) slot.replaceChildren(h("span", { class: "chip accent" }, h("span", { class: "spinner small" }), ` ${job.title.split(" of ")[0]} · ${jobProgress(job).pct}%`));
+    else if (all && (all.steps[all.step] || "").startsWith(`${slot.dataset.name}:`)) slot.replaceChildren(h("span", { class: "chip accent" }, h("span", { class: "spinner small" }), " Checking now"));
+    else slot.replaceChildren();
+  });
 }
 
 function newBanner(s) {
@@ -223,6 +423,7 @@ function newBanner(s) {
     h("div", { class: "row spread" },
       h("h2", { id: "new-adv" }, `${plural(s.new.length, "new advisory", "new advisories")} ${s.new.length === 1 ? "affects" : "affect"} ${plural(affected, "project")} since you last checked`),
       h("button", { class: "btn small", onclick: async (ev) => { await api("POST", "/api/ack"); ev.target.closest(".banner").remove(); toast("Marked as seen"); } }, "Mark as seen")),
+    h("p", { class: "faint" }, "Newly published vulnerabilities in packages your projects use, found by re-checking your lockfiles against today's data. ", helpLink("data")),
     exploited ? h("p", null, h("strong", null, `${exploited} ${exploited === 1 ? "is" : "are"} on CISA's list of vulnerabilities being actively exploited.`)) : null,
     h("ul", null, s.new.slice(0, 10).map((a) => h("li", null,
       sevPill(a.severity),
@@ -242,6 +443,7 @@ function projectRow(p) {
       h("div", { class: "faint mono" }, p.path),
       p.stack.length ? h("div", { class: "row", style: "margin-top:4px" }, p.stack.slice(0, 6).map((s) => h("span", { class: "chip" }, s))) : null),
     h("div", { class: "faint", style: "text-align:right" },
+      h("div", { class: "job-slot", "data-project": p.id, "data-name": p.name }),
       h("div", null, p.exists ? (p.last_scan_at ? `Scanned ${ago(p.last_scan_at)}` : "Not scanned yet") : "Folder missing"),
       p.vulnerable_deps ? h("div", { style: "color:var(--medium)" }, plural(p.vulnerable_deps, "vulnerable dependency", "vulnerable dependencies")) : null));
 }
@@ -313,7 +515,7 @@ async function renderAdd(path, view) {
 // ---------- project ----------
 
 async function renderProject(id, tab, view) {
-  $("#app").replaceChildren(spinner("Loading project"));
+  if (!document.querySelector(".project-page")) $("#app").replaceChildren(spinner("Loading project"));
   const data = await api("GET", `/api/projects/${id}`);
   if (view !== state.view) return;
   const p = data.project;
@@ -329,25 +531,27 @@ async function renderProject(id, tab, view) {
       p.stack.length ? h("div", { class: "row" }, p.stack.map((s) => h("span", { class: "chip" }, s))) : null,
       scan ? h("p", { class: "faint" },
         `Deep checks: ${coverage.deep.join(", ") || "none"}`,
-        coverage.generic.length ? ` · Generic only: ${coverage.generic.join(", ")}` : "") : null),
+        coverage.generic.length ? ` · Generic only: ${coverage.generic.join(", ")}` : "", " ", helpLink("coverage")) : null),
     h("div", { class: "row", style: "align-items:center" },
       gradeEl(scan ? scan.grade : null, true),
       h("div", null,
         h("div", { style: "font-size:20px;font-weight:700" }, scan ? `${scan.score}/100` : "Not scanned"),
-        h("div", { class: "faint" }, scan ? `Scanned ${ago(scan.finished_at)} · ${scan.profile}` : "Run a scan to get a grade"))));
+        h("div", { class: "faint" }, scan ? `Last scanned ${ago(scan.finished_at)} (${scan.profile})` : "Run a check to get a grade"),
+        helpLink("grades", "What does this grade mean?"))));
 
-  const scanPanel = scanCard(p, data.job, data.ai);
-  const parts = [header, scanPanel];
+  const parts = [header, h("div", { id: "job-banner" }), fullCheckCard(p, data.profiles), scanCard(p, data.profiles, data.ai)];
   if (!scan) {
-    parts.push(h("div", { class: "card empty" }, h("h2", null, "No scan yet"), h("p", { class: "muted" }, "Pick a profile above and press Run scan.")));
+    parts.push(h("div", { class: "card empty" }, h("h2", null, "No results yet"),
+      h("p", { class: "muted" }, "Press Run full check above to check everything, or run a single scan.")));
   } else {
     const deps = data.findings.filter((f) => f.check_id === "LP-DEP-001").length;
     const humanDone = data.human.filter((i) => i.checked_at).length;
     const isTauri = p.stack.includes("Tauri");
     const isNext = p.stack.includes("Next.js");
     const entryLabel = isTauri && isNext ? "Routes & commands" : isTauri ? "Commands" : "Routes";
-    const tabs = [["findings", `Findings (${data.findings.length})`], ["routes", entryLabel], ["deps", `Dependencies (${deps})`],
-      ["human", `Needs a human (${humanDone}/${data.human.length})`], ["history", "History"]];
+    const leads = data.ai.leads.filter((l) => l.status !== "dismissed").length;
+    const tabs = [["findings", `Findings (${data.findings.length}${leads ? ` + ${leads} AI` : ""})`], ["routes", entryLabel],
+      ["deps", `Dependencies (${deps})`], ["human", `Needs a human (${humanDone}/${data.human.length})`], ["history", "History"]];
     parts.push(h("nav", { class: "tabs", "aria-label": "Project sections" }, tabs.map(([key, label]) =>
       h("a", { href: `#/project/${id}/${key}`, "aria-current": key === tab ? "page" : null }, label))));
     const content = h("div", { class: "stack" });
@@ -365,57 +569,94 @@ async function renderProject(id, tab, view) {
       toast("Removed");
       location.hash = "#/";
     } }, "Remove from LadPock")));
-  $("#app").replaceChildren(h("div", { class: "stack" }, parts));
-  if (data.job) watchJob(data.job, id);
+  $("#app").replaceChildren(h("div", { class: "stack project-page" }, parts));
+  drawJobBanner();
 }
 
-function scanCard(p, runningJob, aiState) {
+function fullCheckCard(p, profiles) {
+  const full = profiles.full;
+  const ai = h("input", { type: "checkbox", id: "full-ai", checked: true });
+  return h("section", { class: "card hero", "aria-labelledby": "full-title" },
+    h("div", { class: "row spread" },
+      h("div", { class: "grow" },
+        h("h2", { id: "full-title" }, "Run a full check"),
+        h("p", { class: "muted" }, "Everything LadPock can do on this computer, one step after another:")),
+      runButton("Run full check", () => startTask(`/api/projects/${p.id}/full-check`, { ai: ai.checked }), true)),
+    h("ol", { class: "steps" },
+      h("li", null, h("strong", null, "Full scan. "), `All ${full.checks} checks that apply to this project, any installed scanners, `
+        + "live vulnerability data for your dependencies, a check that your packages really exist, and a search of git history "
+        + "for old secrets (if Gitleaks is installed)."),
+      h("li", null, h("strong", null, "Local AI review. "), "Your routes, commands and code read by the model on this computer. "
+        + "After the first run, only code that changed is re-read.")),
+    h("label", { class: "option", for: ai.id }, ai, h("span", null, "Include the local AI review",
+      h("br"), h("span", { class: "faint" }, "Skipped automatically if Ollama isn't running."))),
+    h("p", { class: "faint" }, "You can leave this page while it runs; progress shows here and in the top bar. ", helpLink("profiles", "What exactly runs?")));
+}
+
+function scanCard(p, profiles, aiState) {
   let profile = "standard";
   const seg = h("div", { class: "segmented", role: "group", "aria-label": "Scan profile" });
-  const desc = h("p", { class: "faint" }, PROFILES[profile]);
-  for (const name of Object.keys(PROFILES)) {
+  const desc = h("p", { class: "faint" });
+  const describe = () => {
+    const info = PROFILE_INFO[profile];
+    desc.textContent = `${info.looks} ${profiles[profile].checks} checks on this project. ${info.time}.`;
+  };
+  for (const name of Object.keys(PROFILE_INFO)) {
     seg.append(h("button", { type: "button", "aria-pressed": name === profile ? "true" : "false", onclick: (ev) => {
       profile = name;
-      seg.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b === ev.target)));
-      desc.textContent = PROFILES[name];
-    } }, name[0].toUpperCase() + name.slice(1)));
+      seg.querySelectorAll("button").forEach((b) => b.setAttribute("aria-pressed", String(b === ev.currentTarget)));
+      describe();
+    } }, PROFILE_INFO[name].label));
   }
+  describe();
   const external = h("input", { type: "checkbox", id: "opt-external", checked: true });
   const historyOpt = h("input", { type: "checkbox", id: "opt-history" });
   const offline = h("input", { type: "checkbox", id: "opt-offline" });
   const option = (input, label, help) => h("label", { class: "option", for: input.id }, input,
     h("span", null, h("span", null, label), h("br"), h("span", { class: "faint" }, help)));
 
-  const runBtn = h("button", { class: "btn primary", disabled: !p.exists || null, onclick: async () => {
-    runBtn.setAttribute("aria-busy", "true");
-    try {
-      const res = await api("POST", `/api/projects/${p.id}/scan`, {
-        profile, external: external.checked, history: historyOpt.checked, offline: offline.checked });
-      watchJob(res.job, p.id);
-    } catch (e) {
-      runBtn.removeAttribute("aria-busy");
-      toast(e.message);
-    }
-  } }, "Run scan");
+  const run = runButton("Run scan", () => startTask(`/api/projects/${p.id}/scan`, {
+    profile, external: external.checked, history: historyOpt.checked, offline: offline.checked }));
 
-  return h("section", { class: "card", "aria-label": "Scan" },
+  return h("section", { class: "card", "aria-label": "Scan and AI review" },
     h("div", { class: "scan-grid" },
       h("div", { class: "stack" },
-        h("div", { class: "row spread" }, h("h2", null, "Scan"), seg),
+        h("div", { class: "row spread" }, h("h2", null, "Or run one scan"), seg),
         desc,
+        profileComparison(profiles),
         h("div", null,
           option(external, "Use installed scanners", "Gitleaks, OSV-Scanner and Opengrep, if they're installed."),
-          option(historyOpt, "Search git history for secrets", "Slower. Needs Gitleaks."),
+          option(historyOpt, "Search git history for secrets", "Slower. Needs Gitleaks. Always on in Full."),
           option(offline, "Offline", "Skip the network and use the last vulnerability data LadPock downloaded.")),
-        h("div", { class: "row" }, runBtn, !p.exists ? h("span", { class: "faint" }, "This folder no longer exists.") : null),
-        h("div", { id: "scan-progress" })),
+        h("div", { class: "row" }, run, !p.exists ? h("span", { class: "faint" }, "This folder no longer exists.") : null)),
       aiPanel(p, aiState)));
+}
+
+function profileComparison(profiles) {
+  const names = Object.keys(PROFILE_INFO);
+  const yes = (v) => (v ? "Yes" : "No");
+  const rows = [
+    ["Checks on this project", (n) => `${profiles[n].checks}`],
+    ["What it looks at", (n) => PROFILE_INFO[n].looks],
+    ["Installed scanners", (n) => yes(profiles[n].scanners)],
+    ["Live vulnerability data", () => "Yes (unless Offline)"],
+    ["Checks packages really exist", (n) => yes(profiles[n].registry)],
+    ["Git history secrets", (n) => (profiles[n].history ? "Yes, with Gitleaks" : "No")],
+    ["Typical time", (n) => PROFILE_INFO[n].time],
+    ["Best for", (n) => PROFILE_INFO[n].best],
+  ];
+  return h("details", { class: "compare" },
+    h("summary", null, "What's the difference between Quick, Standard and Full?"),
+    h("div", { class: "table-wrap" }, h("table", null,
+      h("thead", null, h("tr", null, h("th", null, ""), names.map((n) => h("th", null, PROFILE_INFO[n].label)))),
+      h("tbody", null, rows.map(([label, value]) => h("tr", null, h("th", { scope: "row" }, label), names.map((n) => h("td", null, value(n)))))))),
+    h("p", { class: "faint" }, "None of them run your code. “Run full check” above is Full plus the local AI review."));
 }
 
 // ---------- local AI ----------
 
 function aiPanel(p, ai) {
-  const box = h("div", { class: "stack" }, h("h3", null, "Local AI review"), h("div", { class: "faint" }, h("span", { class: "spinner" }), " Looking for a local model…"));
+  const box = h("div", { class: "stack" }, h("h3", null, "Local AI review"), h("div", { class: "faint" }, h("span", { class: "spinner small" }), " Looking for a local model…"));
   loadAi(box, p, ai);
   return box;
 }
@@ -433,7 +674,7 @@ async function loadAi(box, p, ai) {
     box.replaceChildren(title,
       h("p", { class: "muted" }, "Reads your routes, commands and code with a model running on this computer, to find logic bugs pattern checks can't. Free, and your code never leaves your machine."),
       h("p", { class: "faint" }, "Needs Ollama (ollama.com) running with a model installed, for example: ollama pull qwen2.5-coder:14b"),
-      info.error ? h("p", { class: "faint" }, info.error) : null, externalSoon());
+      h("p", { class: "faint" }, info.error || ""), helpLink("ai", "How the AI review works"), externalSoon());
     return;
   }
   const select = h("select", { class: "field", "aria-label": "Model" }, info.models.map((m) =>
@@ -448,22 +689,19 @@ async function loadAi(box, p, ai) {
     await api("POST", `/api/projects/${p.id}/ai/nightly`, { enabled: nightly.checked });
     toast(nightly.checked ? "Included in the nightly review" : "Removed from the nightly review");
   });
-  const progress = h("div");
   const estimate = h("span", { class: "faint" });
-  const runBtn = h("button", { class: "btn", disabled: !p.exists || null, onclick: async () => {
-    try {
-      const res = await api("POST", `/api/projects/${p.id}/ai/run`, {});
-      watchAiJob(res.job, p.id, progress, runBtn);
-    } catch (e) { toast(e.message); }
-  } }, "Review now");
+  const runBtn = runButton("Review now", () => startTask(`/api/projects/${p.id}/ai/run`, {}));
   const estimateBtn = h("button", { class: "btn small", onclick: async () => {
     estimateBtn.setAttribute("aria-busy", "true");
     estimate.textContent = "Loading the model and timing a sample…";
     try {
       const res = await api("POST", "/api/ai/benchmark", { project_id: p.id });
+      pollJobs();
       const result = await waitForJob(res.job);
       const mins = Math.max(1, Math.round((result.estimate_seconds || 0) / 60));
-      estimate.textContent = `${result.todo} of ${result.parts} parts to review: about ${mins} minute${mins === 1 ? "" : "s"} (${Math.round(result.output_rate)} tokens/s).`;
+      estimate.textContent = result.todo
+        ? `${result.todo} of ${result.parts} parts need reviewing: about ${mins} minute${mins === 1 ? "" : "s"} on this computer.`
+        : `Nothing has changed since the last review (${result.parts} parts), so a review would finish almost instantly.`;
     } catch (e) { estimate.textContent = e.message; }
     estimateBtn.removeAttribute("aria-busy");
   } }, "Estimate time");
@@ -476,13 +714,13 @@ async function loadAi(box, p, ai) {
     : h("p", { class: "faint" }, "Not reviewed yet. The first review reads everything; later ones only re-read what changed.");
 
   box.replaceChildren(title,
-    h("p", { class: "faint" }, "Runs on this computer. Results are leads to check, not findings: they never change the grade."),
+    h("p", { class: "faint" }, "Runs on this computer. Results are leads to check, not findings: they never change the grade. ", helpLink("ai")),
     h("label", { class: "row" }, h("span", { class: "faint" }, "Model"), select),
     h("label", { class: "option", for: think.id }, think, h("span", null, "Let the model think first", h("br"), h("span", { class: "faint" }, "Slower, sometimes catches more."))),
-    h("div", { class: "row" }, runBtn, estimateBtn), estimate, progress, lastLine,
+    h("div", { class: "row" }, runBtn, estimateBtn), estimate, lastLine,
     h("label", { class: "option", for: nightly.id }, nightly, h("span", null, "Include in the nightly review")),
     scheduleBlock(info.schedule || {}), externalSoon());
-  if (ai.job) watchAiJob(ai.job, p.id, progress, runBtn);
+  drawJobBanner();  // the buttons just drawn should reflect a task that's already running
 }
 
 function scheduleBlock(schedule) {
@@ -525,31 +763,6 @@ async function waitForJob(jobId) {
   }
 }
 
-function watchAiJob(jobId, projectId, box, runBtn) {
-  runBtn.setAttribute("aria-busy", "true");
-  const view = state.view;
-  const stopBtn = h("button", { class: "btn small", onclick: async () => {
-    await api("POST", `/api/jobs/${jobId}/stop`);
-    stopBtn.textContent = "Stopping after this part…";
-  } }, "Stop");
-  const timer = setInterval(async () => {
-    if (view !== state.view) return clearInterval(timer);
-    let job;
-    try { job = await api("GET", `/api/jobs/${jobId}`); } catch (e) { return clearInterval(timer); }
-    const lines = job.log.slice(-6).join("\n");
-    box.replaceChildren(h("div", { class: "row" }, job.status === "running" ? h("span", { class: "spinner" }) : null,
-      job.status === "running" ? "Reviewing…" : job.status === "done" ? "Done" : "Review failed", job.status === "running" ? stopBtn : null),
-      h("div", { class: "log", style: "margin-top:8px" }, lines || "Loading the model…"));
-    if (job.status === "running") return;
-    clearInterval(timer);
-    runBtn.removeAttribute("aria-busy");
-    if (job.status === "done") {
-      toast(`AI review ${job.result.status}: ${plural(job.result.leads, "new lead")}`);
-      renderProject(projectId, currentRoute().tab, state.view);
-    } else toast(job.error || "AI review failed");
-  }, 1000);
-}
-
 function leadsSection(projectId, leads) {
   if (!leads.length) return null;
   const open = leads.filter((l) => l.status !== "dismissed");
@@ -586,33 +799,6 @@ function leadEl(projectId, l) {
           await copy(res.prompt);
           toast("Fix prompt copied");
         } }, "Copy fix prompt"))));
-}
-
-function watchJob(jobId, projectId) {
-  const box = $("#scan-progress");
-  const btn = document.querySelector(".scan-grid .btn.primary");
-  if (btn) btn.setAttribute("aria-busy", "true");
-  const view = state.view;
-  const tick = async () => {
-    if (view !== state.view) return clearInterval(state.poll);
-    let job;
-    try { job = await api("GET", `/api/jobs/${jobId}`); } catch (e) { clearInterval(state.poll); return; }
-    if (box) box.replaceChildren(h("div", { class: "row" }, job.status === "running" ? h("span", { class: "spinner" }) : null,
-      job.status === "running" ? "Scanning…" : job.status === "done" ? "Done" : "Scan failed"),
-      h("div", { class: "log", style: "margin-top:8px" }, job.log.join("\n") || "Starting…"));
-    if (job.status === "running") return;
-    clearInterval(state.poll);
-    if (job.status === "done") {
-      toast(`Scan finished: grade ${job.result.grade}, ${plural(job.result.findings, "finding")}`);
-      renderProject(projectId, currentRoute().tab, state.view);
-    } else {
-      if (btn) btn.removeAttribute("aria-busy");
-      toast(job.error || "Scan failed");
-    }
-  };
-  clearInterval(state.poll);
-  state.poll = setInterval(tick, 1000);
-  tick();
 }
 
 // ---------- findings ----------
@@ -814,6 +1000,96 @@ function drawHistory(container, history) {
       h("td", null, `${s.score}/100`), h("td", { style: "width:35%" }, h("div", { class: "bar" }, h("span", { style: `width:${s.score}%` })))))))));
 }
 
+// ---------- help ----------
+
+const HELP = [
+  ["start", "How LadPock works", [
+    "LadPock reads your project's files (it never runs them) and looks for the security mistakes AI-written code tends to make. It does four kinds of checking:",
+    ["Built-in checks: patterns and structure, such as admin keys in browser code, routes that never check who's calling, Supabase tables without Row Level Security, or Tauri commands that write wherever the page says.",
+      "Installed scanners, if you have them: Gitleaks for secrets (including git history), OSV-Scanner and Opengrep.",
+      "Your dependencies, checked against live vulnerability databases every time.",
+      "Optionally, a local AI model that reads your code for logic bugs patterns can't see."],
+    "Everything it finds becomes a finding with a severity and a confidence. Findings are grouped into categories, and each category gets a grade.",
+  ]],
+  ["running", "Running tasks", [
+    "Scans, full checks and AI reviews run in the background. While one is running you'll see:",
+    ["a spinner and percentage in the top bar (click it for details)",
+      "a blue “Running” banner on the project's page, with the current step and a Stop button where stopping is possible",
+      "“● Running” in the browser tab title"],
+    "When it finishes, a message pops up, the banner turns green (or red if it failed), and the page refreshes with the new results. Tasks keep going if you switch pages, but stop if you close the terminal running `ladpock ui`.",
+    "Only one task runs per project at a time, and only one task can use the local AI model at a time. LadPock tells you if you need to wait.",
+  ]],
+  ["profiles", "Quick, Standard, Full, and the full check", [
+    "Quick looks for leaked keys and passwords, committed .env files, and known vulnerabilities in your dependencies. It takes seconds. Use it before a commit or deploy.",
+    "Standard runs every built-in check that applies to your project: sign-in, access control, routes and Tauri commands, injection, payments, config, AI code smells and supply chain. It also uses any installed scanners, and checks that the packages you depend on really exist on npm or PyPI (AI assistants sometimes invent names). It's the default for everyday use.",
+    "Full is Standard plus a search of your git history for secrets that were committed and later deleted. That needs Gitleaks installed. Use it before a release, or weekly.",
+    "Run full check is Full followed by the local AI review: everything LadPock can do on this computer. Check all projects does that for every project, one after another.",
+    "None of these run your code, install packages or execute build scripts.",
+  ]],
+  ["grades", "How grades work", [
+    "Each category starts at 100. Open findings take points off: 40 for critical, 20 for high, 8 for medium and 2 for low. Findings LadPock is less sure about (low confidence) count half.",
+    "A pile of small issues can't fail a category on its own. Only critical or high findings can take it below C-, and only medium ones below B.",
+    "The overall grade is the average of the categories, capped while a serious finding is open. With an open critical issue it's at most F (59). With an open high issue it's at most C+ (79). A leaked key shouldn't hide behind tidy code.",
+    "Roughly: A means no obvious problems found, B means a few things to tidy, C means real issues worth fixing soon, and D or F means something serious is open. A good grade isn't a guarantee: LadPock can't see your business logic, your dashboards or your production settings.",
+  ]],
+  ["severity", "Severity and confidence", [
+    "Severity is how bad it would be if the problem is real. Critical means someone could take over accounts, data or money now. High means a serious hole. Medium means a weakness worth fixing. Low means hardening.",
+    "Confidence is how sure LadPock is that it's real. High means the pattern is unambiguous, for example a live key in the code. Medium means it's probably real. Low means it's a heuristic that needs a human look, for example “this route doesn't seem to check ownership”.",
+  ]],
+  ["coverage", "Deep checks and generic checks", [
+    "Some stacks have dedicated packs that understand how the framework works: Next.js, React, Supabase, Firebase, Stripe, GitHub Actions and Tauri. Everything else gets the generic checks: secrets, dependencies, injection patterns, config and AI code smells.",
+    "Each project page lists which stacks got deep checks, so you know how thorough a scan was.",
+  ]],
+  ["ai", "The local AI review", [
+    "A model running on this computer through Ollama reads the parts of your project most likely to hide logic bugs. It starts with routes and Tauri commands (along with what the static checks found), then gives a second opinion on medium-and-above findings, then reads the rest of your code. Nothing is sent anywhere, and secrets are masked before the model sees anything.",
+    "What it reports are leads, not findings. Before you see a lead it has to pass four filters:",
+    ["it must quote a real line of code that exists in your project, and not a comment",
+      "the model takes a second look and confirms the claim against the code",
+      "it mustn't repeat something the scanner already reported",
+      "it's capped at high severity"],
+    "Leads never change your grade and can't hide a scanner finding. Confirm the real ones, which puts them in the fix prompt, and dismiss the rest. Dismissed leads stay dismissed. Even after filtering, expect some leads to be wrong, because the model can't see everything.",
+    "The first review reads everything. Later reviews only re-read code that changed. Stopping is safe at any time; the next run continues from where it stopped.",
+    "The nightly review is a Windows scheduled task for your account. It runs only when plugged in, at low priority, and stops at the time you choose.",
+  ]],
+  ["data", "Vulnerability data", [
+    "Every time you open LadPock or run a scan, it refreshes three sources:",
+    ["OSV.dev: known vulnerabilities for npm, PyPI, crates.io, Go and more, matched against the exact versions in your lockfiles.",
+      "CISA KEV: the US government's list of vulnerabilities attackers are actively using. Anything on it is treated as critical.",
+      "EPSS: the estimated chance a vulnerability will be exploited in the next 30 days."],
+    "Because LadPock remembers each project's dependency list, it can tell you when a new vulnerability affects a project you haven't touched. That's the red banner on the home page.",
+    "What's sent: package names and versions (to OSV.dev and the npm and PyPI registries) and CVE IDs (to EPSS). Never your code. There's no telemetry.",
+  ]],
+  ["routes", "Routes and commands", [
+    "For Next.js, the Routes tab lists every API route and server action. For each one it shows whether the handler checks who's calling (Auth), whether it checks the record belongs to them (Owner), whether input is validated, and whether there's a rate limit.",
+    "For Tauri, the Commands tab lists every command the app's web page can call. For each one it shows what input it takes from the page, whether it reads or writes files, whether it checks a path is inside an allowed folder, and whether it starts programs.",
+    "Both are heuristic. Read “no” as “go and look”.",
+  ]],
+  ["accept", "Accepting a risk", [
+    "If a finding is a deliberate choice, use Accept risk… on it. You give a reason and an expiry (90 days by default), and it's hidden from future scans until then.",
+    "You can also add a `ladpock-ignore` comment on the line. Hidden findings are always counted on the results page, so you'll notice if anything (including an AI assistant) quietly hides one.",
+  ]],
+  ["human", "Needs a human", [
+    "Some of the most important protections can't be seen in code: two-factor login on your accounts, tested backups, spending limits on paid APIs, and trying to open another user's data while logged in as someone else. The checklist reminds you to verify these, and remembers what you've ticked.",
+  ]],
+  ["limits", "What LadPock can't do", [
+    "It finds common, recognisable mistakes. It doesn't understand your business rules, can't see settings in your hosting or database dashboards, and doesn't test the running app. Use it alongside the Needs a human checklist, and get a person to review anything handling payments or sensitive data before launch.",
+  ]],
+];
+
+function renderHelp(section) {
+  const blocks = HELP.map(([id, title, body]) => h("section", { id: `help-${id}`, class: "help-section" },
+    h("h2", null, title),
+    body.map((part) => Array.isArray(part) ? h("ul", null, part.map((li) => h("li", null, li))) : h("p", null, part))));
+  $("#app").replaceChildren(h("div", { class: "stack help" },
+    h("a", { href: "#/" }, "← Your projects"),
+    h("h1", null, "Help"),
+    h("nav", { class: "help-toc", "aria-label": "Help topics" }, HELP.map(([id, title]) => h("a", { href: `#/help/${id}` }, title))),
+    blocks));
+  const target = section && document.getElementById(`help-${section}`);
+  if (target) target.scrollIntoView({ block: "start" });
+  else window.scrollTo(0, 0);
+}
+
 // ---------- start ----------
 
 state.token = readToken();
@@ -821,4 +1097,5 @@ if (!state.token) showLocked();
 else {
   window.addEventListener("hashchange", route);
   route();
+  pollJobs();
 }

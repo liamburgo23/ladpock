@@ -57,8 +57,10 @@ and zero-days aren't in any database.
 ## Scoring
 
 Weights: critical 40, high 20, medium 8, low 2, halved for low-confidence findings. Category score = 100 minus
-weights, floored at 0. Overall = the average of the category scores, capped while a critical (F) or high (C+)
-finding of medium or high confidence is open, so a leaked key can't hide behind a tidy codebase.
+weights, floored at 0. Since 0.5.0 it's also floored by the worst severity in the category: 70 (C-) if the worst is
+medium, 83 (B) if it's low. A pile of small issues can't fail a category; only critical or high findings can.
+Overall = the average of the category scores, capped while a critical (F) or high (C+) finding of medium or high
+confidence is open, so a leaked key can't hide behind a tidy codebase.
 
 Findings can be hidden with `ladpock suppress` (expiring, with a recorded reason) or a `ladpock-ignore` comment
 (optionally `ladpock-ignore: LP-XXX-000`). Hidden findings are always counted in the report, because an AI
@@ -118,5 +120,18 @@ InteractiveToken, LeastPrivilege, no start on battery, stop on battery, 12-hour 
 2. **More packs.** Express/Fastify, FastAPI/Django, SvelteKit, Remix, Electron. Each one adds a route parser, rules and fixtures.
 3. **Scanner installer.** Downloads pinned versions by SHA-256 with a cooldown before adopting new releases.
 4. **Live probes.** Localhost by default, ownership-verified otherwise. Headers, CORS, exposed paths, a small rate-limit burst.
-5. **Scoring calibration.** Category grades currently drop to F from a handful of medium findings. Rebalance them
-   so mediums can't alone fail a category.
+5. **Notifications.** Optional desktop notification when a long task or the nightly review finishes.
+
+## Tasks in the dashboard (0.5.0)
+
+Every background task (scan, full check, check-all, AI review, benchmark) is a `Job` with a title, a list of steps,
+the current step, a fraction within that step when known (AI parts done), and start and finish times. `run_scan`
+reports its phases through a `step` callback (`SCAN_STEPS`), and `run_review` reports parts through `progress`.
+
+The page polls `/api/jobs` every second while something runs (every 6 seconds otherwise). It drives:
+- the top-bar indicator and its panel
+- the project's status banner
+- the run buttons (disabled while busy)
+- the browser tab title
+- the "finished" message
+Only one task runs per project, "check all projects" runs alone, and only one task at a time uses the local model.

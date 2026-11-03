@@ -139,6 +139,16 @@ class Scoring(unittest.TestCase):
     def test_high_caps_below_b(self):
         self.assertLessEqual(scoring.score([self._f(Severity.HIGH)]).overall, 79)
 
+    def test_mediums_alone_cant_fail_a_category(self):
+        findings = [Finding("X", "t", Severity.MEDIUM, "supply-chain") for _ in range(8)]
+        findings += [Finding("Y", "t", Severity.LOW, "secrets") for _ in range(20)]
+        card = scoring.score(findings)
+        grades = {c.key: c.grade for c in card.categories}
+        self.assertEqual(grades["supply-chain"], "C-")
+        self.assertEqual(grades["secrets"], "B")
+        highs = scoring.score([Finding("Z", "t", Severity.HIGH, "authz") for _ in range(4)])
+        self.assertEqual(next(c.grade for c in highs.categories if c.key == "authz"), "F")
+
     def test_low_confidence_counts_half_and_doesnt_cap(self):
         card = scoring.score([self._f(Severity.HIGH, "low")])
         self.assertEqual(next(c.score for c in card.categories if c.key == "secrets"), 90)

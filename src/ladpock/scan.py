@@ -22,11 +22,26 @@ from .scanners.base import ScannerResult
 from .stack import coverage, detect
 from .timeutil import iso
 
+SCAN_STEPS = ["Reading files", "Built-in checks", "Installed scanners", "Vulnerability data",
+              "Package registry", "Scoring"]
+
 PROFILES = {
     "quick": {"categories": {"secrets", "supply-chain"}, "scanners": False, "history": False, "registry": False},
     "standard": {"categories": None, "scanners": True, "history": False, "registry": True},
     "full": {"categories": None, "scanners": True, "history": True, "registry": True},
 }
+
+
+def profile_summary(stack: list[str]) -> dict[str, dict]:
+    """What each profile would run on a project with this stack, for explaining the choice."""
+    out = {}
+    for name, settings in PROFILES.items():
+        infos = [info for info, _ in REGISTRY.values()
+                 if (settings["categories"] is None or info.category in settings["categories"])
+                 and (not info.stacks or set(info.stacks) & set(stack))]
+        out[name] = {"checks": len(infos), "scanners": settings["scanners"], "history": settings["history"],
+                     "registry": settings["registry"], "categories": sorted({i.category for i in infos})}
+    return out
 
 
 @dataclass
@@ -153,7 +168,9 @@ def _dedupe(findings: list[Finding]) -> list[Finding]:
 
 
 def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bool = False,
-             external: bool = True, history: bool | None = None, log: Callable[[str], None] = _log) -> ScanResult:
+             external: bool = True, history: bool | None = None, log: Callable[[str], None] = _log,
+             step: Callable[[str], None] = lambda _name: None) -> ScanResult:
+    """Scan a project. ``step`` is called with each name in SCAN_STEPS as the scan reaches it."""
     root = Path(path).resolve()
     if not root.is_dir():
         raise FileNotFoundError(f"{root} is not a folder")
@@ -161,6 +178,7 @@ def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bo
     started = iso()
     project_id = db.upsert_project(root)
 
+    step(SCAN_STEPS[0])
     log(f"Indexing {root} ...")
     index = FileIndex(root)
     stack = detect(index)
@@ -169,6 +187,7 @@ def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bo
     if index.truncated:
         errors.append("Stopped indexing at 50,000 files; some files weren't checked.")
 
+    step(SCAN_STEPS[1])
     log(f"Running built-in checks ({', '.join(stack) or 'generic'}) ...")
     findings, check_errors = run_all(ctx, settings["categories"])
     errors.extend(check_errors)
@@ -180,6 +199,7 @@ def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bo
     components, warnings = inventory.collect(index)
     errors.extend(warnings)
     scanners: list[ScannerResult] = []
+    step(SCAN_STEPS[2])
     if external and settings["scanners"]:
         for name, runner in (("gitleaks", lambda: gitleaks.scan(root, history if history is not None else settings["history"])),
                              ("osv-scanner", lambda: osv_scanner.scan(root)),
@@ -195,6 +215,7 @@ def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bo
             components.extend(c for c in result.components if c not in known)
     db.replace_components(project_id, components)
 
+    step(SCAN_STEPS[3])
     feeds = refresh_feeds(db, offline, log)
     if not offline and components:
         log(f"Checking {len(components)} dependencies against OSV ...")
@@ -217,6 +238,7 @@ def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bo
             feeds.append(FeedStatus("EPSS", False, "unreachable, exploit likelihood may be missing"))
     findings.extend(advisory_findings(hits, REGISTRY["LP-DEP-001"][0]))
 
+    step(SCAN_STEPS[4])
     if not offline and settings["registry"]:
         deps = inventory.direct_dependencies(index)
         if deps:
@@ -226,6 +248,7 @@ def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bo
                 findings.append(ctx.finding(info, src, None, f"{name} ({eco})", confidence="high",
                                             message=f"'{name}' isn't on the public {eco} registry. {info.why}"))
 
+    step(SCAN_STEPS[5])
     findings = _dedupe(findings)
     suppressions = db.active_suppressions(project_id)
     hidden = {id(f) for f in findings if f.fingerprint in suppressions or inline_ignored(ctx, f)}
