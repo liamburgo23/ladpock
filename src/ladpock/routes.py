@@ -1,7 +1,8 @@
 """The route matrix: every endpoint and which protections it has (auth,
 ownership check, validation, rate limiting). Next.js handlers and server
 actions are read here; Express, Fastify, Hono, NestJS, FastAPI, Flask and
-Django come from server_routes.
+Django come from server_routes; SvelteKit, Remix, Nuxt and Astro from
+fullstack_routes; Spring, Go, Rails, Laravel and ASP.NET from backend_routes.
 
 This is heuristic. It recognises common libraries and patterns, and says "?"
 when it can't tell rather than guessing.
@@ -71,8 +72,16 @@ PUBLIC_PATH = re.compile(
     r"(?i)/(?:auth|login|logout|signin|sign-in|signup|sign-up|register|forgot\w*|reset\w*|callback|verify|magic\w*|otp|"
     r"confirm|health|healthz|status|og|sitemap|robots|public|webhooks?|cron)(?:/|$|-)"
 )
-AUTH_FLOW = re.compile(r"(?i)/(?:login|signin|sign-in|signup|sign-up|register|forgot\w*|reset\w*|otp|magic\w*|password)(?:/|$|-)")
+# SvelteKit names actions in the URL (/settings?/reset). A sign-in word there counts, but a bare "reset" action
+# usually resets something else, so that one has to be a real path segment.
+AUTH_FLOW = re.compile(r"(?i)/(?:login|signin|sign-in|signup|sign-up|register|forgot\w*|otp|magic\w*|password|reset-?password)"
+                       r"(?:/|$|-|\?)|(?<!\?)/reset\w*(?:/|$|-|\?)")
 WEBHOOK = re.compile(r"(?i)webhook")
+
+
+# Frameworks whose app-wide guard decides by path, so a missed path is wide open. Router-level middleware elsewhere
+# (Express router.use, Rails before_action, Spring Security) is the normal, robust way to protect routes.
+PATH_MATCHED_MIDDLEWARE = {"route", "pages-api", "sveltekit", "nuxt", "astro"}
 
 
 @dataclass
@@ -81,7 +90,7 @@ class Route:
     path: str
     file: str
     line: int
-    kind: str  # route | pages-api | action | express | fastify | hono | nest | fastapi | flask | django
+    kind: str  # route | pages-api | action, or the framework's name for the others
     auth: str = "no"  # yes | mw (middleware only) | sig (signature) | no
     owner: str = "n/a"  # yes | rls | no | n/a
     validation: str = "n/a"  # yes | no | n/a
@@ -95,7 +104,8 @@ class Route:
 
     @property
     def public_path(self) -> bool:
-        return self.public or bool(PUBLIC_PATH.search(self.path))
+        # Only the path itself says a route is public: /settings?/confirm is still the settings page.
+        return self.public or bool(PUBLIC_PATH.search(self.path.split("?")[0])) or bool(AUTH_FLOW.search(self.path))
 
     @property
     def webhook(self) -> bool:
@@ -226,6 +236,8 @@ def analyze(index: FileIndex) -> list[Route]:
             continue
         code = strip_comments(text)
         auth_names = _auth_names(code)
+        if pages and not re.search(r"export\s+default|module\.exports", code):
+            continue  # Next.js API routes have a default export; Astro's src/pages/api files don't
 
         if app:
             path = _url(rel, app.group(1))
@@ -262,9 +274,13 @@ def analyze(index: FileIndex) -> list[Route]:
                 route = Route("ACTION", f"action {name}()", rel, line_of(code, match.start()), "action")
                 route = _assess(route, code[match.start():end], code, auth_names, Middleware())
                 routes.append(route)
+    from .backend_routes import analyze_backends
+    from .fullstack_routes import analyze_fullstack
     from .server_routes import analyze_servers
 
     routes.extend(analyze_servers(index, Route))
+    routes.extend(analyze_fullstack(index))
+    routes.extend(analyze_backends(index))
     routes.sort(key=lambda r: (r.kind == "action", r.path, METHODS.index(r.method) if r.method in METHODS else 99))
     return routes
 
@@ -277,7 +293,7 @@ def gaps(route: Route) -> list[str]:
         out.append("no auth")
     if route.owner == "no" and route.auth in ("yes", "mw"):
         out.append("no ownership check")
-    if route.auth == "mw" and (route.db or route.mutates):
+    if route.auth == "mw" and (route.db or route.mutates) and route.kind in PATH_MATCHED_MIDDLEWARE:
         out.append("auth only in middleware")
     if route.paid_api and route.rate_limit == "no":
         out.append("paid API without rate limit")

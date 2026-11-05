@@ -19,13 +19,15 @@ LABELS = {
     "kubernetes": "Kubernetes", "terraform": "Terraform", "electron": "Electron", "react-native": "React Native",
     "expo": "Expo", "android": "Android", "ios": "iOS", "flutter": "Flutter", "go": "Go", "php": "PHP",
     "laravel": "Laravel", "ruby": "Ruby", "rails": "Rails", "java": "Java/Kotlin", "spring": "Spring", "dotnet": ".NET",
+    "aspnet": "ASP.NET", "go-web": "Go web server",
 }
 
 # Stacks with dedicated, framework-aware checks. Everything else still gets the
 # generic checks (secrets, dependencies, injection patterns, config).
 DEEP_PACKS = {"nextjs", "react", "supabase", "firebase", "stripe", "github-actions", "tauri", "express", "fastify",
               "hono", "koa", "nestjs", "fastapi", "flask", "django", "docker", "kubernetes", "terraform", "electron",
-              "react-native", "expo", "android", "ios", "flutter"}
+              "react-native", "expo", "android", "ios", "flutter", "sveltekit", "remix", "nuxt", "astro", "spring", "rails",
+              "laravel", "aspnet", "go-web"}
 
 _NPM = {
     "next": "nextjs", "react": "react", "vite": "vite", "express": "express", "fastify": "fastify",
@@ -36,7 +38,8 @@ _NPM = {
     "@prisma/client": "prisma", "drizzle-orm": "drizzle", "openai": "openai",
     "@anthropic-ai/sdk": "anthropic", "ai": "ai-sdk", "@tauri-apps/api": "tauri", "@tauri-apps/cli": "tauri",
     "koa": "koa", "@koa/router": "koa", "@nestjs/core": "nestjs", "@nestjs/common": "nestjs", "@hono/node-server": "hono",
-    "electron": "electron", "react-native": "react-native", "expo": "expo",
+    "electron": "electron", "react-native": "react-native", "expo": "expo", "@remix-run/react": "remix",
+    "@remix-run/serve": "remix", "@react-router/node": "remix", "@react-router/dev": "remix", "nitropack": "nuxt",
 }
 _PY = {
     "fastapi": "fastapi", "flask": "flask", "django": "django", "supabase": "supabase", "stripe": "stripe",
@@ -113,6 +116,12 @@ def detect(index: FileIndex) -> list[str]:
             add("flutter")
         elif name == "go.mod":
             add("go")
+            if re.search(r"gin-gonic/gin|go-chi/chi|labstack/echo|gofiber/fiber|gorilla/mux", index.read(rel) or ""):
+                add("go-web")
+        elif name.endswith(".go"):
+            add("go")
+            if re.search(r"\bHandleFunc\(|\bListenAndServe\(", index.read(rel) or ""):
+                add("go-web")
         elif name == "composer.json":
             add("php")
             if "laravel/framework" in (index.read(rel) or ""):
@@ -123,10 +132,12 @@ def detect(index: FileIndex) -> list[str]:
                 add("rails")
         elif name in ("pom.xml", "build.gradle", "build.gradle.kts"):
             add("java")
-            if "spring-boot" in (index.read(rel) or ""):
+            if re.search(r"spring-boot|springframework", index.read(rel) or ""):
                 add("spring")
         elif name.endswith(".csproj"):
             add("dotnet")
+            if "Microsoft.NET.Sdk.Web" in (index.read(rel) or ""):
+                add("aspnet")
         elif name.endswith((".yml", ".yaml")) and not rel.startswith(".github/") and re.search(
                 r"(?m)^apiVersion:\s*\S+[\s\S]*^kind:\s*(?:Deployment|Pod|Service|StatefulSet|DaemonSet|Ingress|Secret|"
                 r"ConfigMap|Job|CronJob)\b", index.read(rel) or ""):

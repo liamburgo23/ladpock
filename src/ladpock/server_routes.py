@@ -667,7 +667,7 @@ def _django_view(route_cls, rel: str, fn: PyFunc, code: str, urls: dict[str, str
 
 
 def _class_body(code: str, name: str, full: bool = False) -> str:
-    match = re.search(rf"(?m)^(\s*)class\s+{re.escape(name)}\b.*$", code)
+    match = re.search(rf"(?m)^([ \t]*)class\s+{re.escape(name)}\b.*$", code)
     if not match:
         return ""
     ind = len(match.group(1))

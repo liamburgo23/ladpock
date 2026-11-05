@@ -6,7 +6,7 @@ class UsersController < ApplicationController
   end
 
   def create
-    @user = User.create(user_params)
+    @user = current_user.team.users.create(user_params)
   end
 
   def export

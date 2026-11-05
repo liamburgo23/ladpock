@@ -1,0 +1,6 @@
+{
+  "name": "example/billing",
+  "require": {
+    "laravel/framework": "^11.0"
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "name": "clean-fullstack",
+  "private": true,
+  "dependencies": {
+    "@sveltejs/kit": "2.5.0",
+    "@remix-run/node": "2.8.0",
+    "nuxt": "3.11.0",
+    "astro": "4.5.0",
+    "@prisma/client": "5.10.0",
+    "zod": "3.22.4"
+  }
+}

@@ -1,14 +1,15 @@
-"""Findings derived from the route matrix: Next.js, Express, Fastify, Hono, NestJS, FastAPI, Flask and Django."""
+"""Findings derived from the route matrix, which covers every web framework LadPock can read routes from."""
 
 from __future__ import annotations
 
 from typing import Iterator
 
 from ..models import Finding, Severity
-from ..routes import AUTH_FLOW, MUTATING, Route
+from ..routes import AUTH_FLOW, MUTATING, PATH_MATCHED_MIDDLEWARE, Route
 from .base import CheckInfo, ScanContext, check
 
-STACKS = ("nextjs", "express", "fastify", "hono", "koa", "nestjs", "fastapi", "flask", "django")
+STACKS = ("nextjs", "express", "fastify", "hono", "koa", "nestjs", "fastapi", "flask", "django", "sveltekit", "remix",
+          "nuxt", "astro", "spring", "go", "rails", "laravel", "dotnet")
 
 
 def _finding(ctx: ScanContext, info: CheckInfo, route: Route, **kwargs) -> Finding:
@@ -55,7 +56,7 @@ def missing_ownership(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
 )
 def middleware_only(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
     for route in ctx.routes:
-        if route.auth == "mw" and (route.db or route.mutates):
+        if route.auth == "mw" and (route.db or route.mutates) and route.kind in PATH_MATCHED_MIDDLEWARE:
             yield _finding(ctx, info, route, confidence="low")
 
 

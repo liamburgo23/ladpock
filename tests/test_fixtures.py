@@ -33,7 +33,7 @@ EXPECTED_TAURI = {
     "LP-TAURI-007", "LP-TAURI-008", "LP-TAURI-009", "LP-TAURI-010", "LP-RUST-001", "LP-VIBE-001",
 }
 EXPECTED_NODE = {
-    "LP-AUTHZ-001", "LP-AUTHZ-002", "LP-AUTHZ-003", "LP-AUTHZ-004", "LP-ABUSE-003", "LP-ABUSE-004", "LP-ABUSE-010",
+    "LP-AUTHZ-001", "LP-AUTHZ-002", "LP-AUTHZ-004", "LP-ABUSE-003", "LP-ABUSE-004", "LP-ABUSE-010",
     "LP-API-001", "LP-API-002", "LP-AUTH-006", "LP-AUTH-007", "LP-AUTH-008", "LP-AUTH-009", "LP-AUTH-010", "LP-AUTH-011",
     "LP-CFG-005", "LP-CFG-006", "LP-CRYPTO-002", "LP-INJ-006", "LP-INJ-007", "LP-INJ-009", "LP-INJ-010", "LP-INJ-011",
     "LP-SEC-007",
@@ -107,7 +107,7 @@ class VulnerableFixture(unittest.TestCase):
 class CleanFixture(unittest.TestCase):
     def test_clean_apps_have_no_findings(self):
         for name in ("clean-next-supabase", "clean-tauri", "clean-node-api", "clean-python-web", "clean-infra",
-                     "clean-electron", "clean-mobile", "clean-polyglot"):
+                     "clean-electron", "clean-mobile", "clean-polyglot", "clean-fullstack"):
             with self.subTest(name), materialize(name) as tmp:
                 findings, errors = run_all(_context(Path(tmp) / name))
                 self.assertEqual(errors, [])
@@ -249,6 +249,73 @@ class PolyglotFixture(unittest.TestCase):
         self.assertEqual(files("LP-AUTH-003"), {"php", "java"})  # md5 / MessageDigest for passwords
         self.assertIn("java", files("LP-CFG-001"))  # @CrossOrigin(origins = "*")
         self.assertIn("go", files("LP-CRYPTO-001"))  # math/rand for a reset token
+
+
+class MoreFrameworkRoutes(unittest.TestCase):
+    """File-based JS frameworks, then Spring, Go, Rails, Laravel and ASP.NET."""
+
+    def load(self, name):
+        with materialize(name) as tmp:
+            root = Path(tmp) / name
+            findings, errors = run_all(_context(root))
+            routes = {(r.kind, r.method, r.path): r for r in analyze(FileIndex(root))}
+        self.assertEqual(errors, [])
+        return findings, routes
+
+    def test_fullstack_vulnerable(self):
+        findings, routes = self.load("vuln-fullstack")
+        self.assertEqual(routes[("sveltekit", "POST", "/api/notes")].auth, "no")
+        self.assertEqual(routes[("sveltekit", "DELETE", "/api/notes/[id]")].owner, "no")
+        self.assertTrue(routes[("sveltekit", "POST", "/api/ask")].paid_api)  # (marketing) group left out of the URL
+        self.assertIn(("sveltekit", "ACTION", "/settings?/reset"), routes)
+        self.assertEqual(routes[("remix", "GET", "/api/orders/:id")].owner, "no")
+        self.assertEqual(routes[("nuxt", "DELETE", "/api/posts/[id]")].auth, "no")
+        self.assertEqual(routes[("nuxt", "GET", "/api/admin/users")].auth, "mw")  # guard only covers /api/admin
+        self.assertEqual(routes[("astro", "ACTION", "action removeAccount()")].auth, "no")
+        self.assertNotIn(("pages-api", "ANY", "/api/comments"), routes)  # Astro's src/pages/api isn't Next.js
+        where = {(f.check_id, f.snippet) for f in findings}
+        self.assertIn(("LP-AUTHZ-001", "ACTION /settings?/reset"), where)  # an action called reset isn't a public page
+        self.assertIn(("LP-AUTH-010", "POST /login"), where)
+        self.assertIn(("LP-ABUSE-010", "POST /api/chat"), where)
+        self.assertIn(("LP-AUTHZ-003", "GET /api/admin/users"), where)  # a path-matched guard
+
+    def test_fullstack_clean(self):
+        _, routes = self.load("clean-fullstack")
+        self.assertEqual((routes[("remix", "GET", "/api/orders/:id")].auth, routes[("remix", "GET", "/api/orders/:id")].owner),
+                         ("yes", "yes"))
+        self.assertEqual(routes[("sveltekit", "POST", "/api/notes")].rate_limit, "mw")  # hooks.server.ts
+
+    def test_backends_vulnerable(self):
+        findings, routes = self.load("vuln-polyglot")
+        expected = {
+            ("spring", "POST", "/api/invoices"): ("no", "no"), ("spring", "DELETE", "/api/invoices/{id}"): ("yes", "no"),
+            ("go", "POST", "/api/orders"): ("no", "no"), ("go", "GET", "/api/me/orders/:id"): ("mw", "no"),
+            ("rails", "DELETE", "/api/invoices/:id"): ("yes", "no"), ("rails", "POST", "/api/invoices/:id/refund"): ("yes", "no"),
+            ("rails", "POST", "/users"): ("no", "no"),  # skip_before_action :authenticate_user!
+            ("laravel", "GET", "/api/orders/{order}"): ("yes", "no"), ("laravel", "DELETE", "/api/orders/{order}"): ("no", "no"),
+            ("laravel", "POST", "/api/comments"): ("no", "no"),
+            ("aspnet", "POST", "/api/invoices"): ("no", "no"), ("aspnet", "DELETE", "/api/invoices/{id}"): ("yes", "no"),
+            ("aspnet", "POST", "/api/feedback"): ("no", "no"),
+        }
+        for key, (auth, owner) in expected.items():
+            with self.subTest(key):
+                self.assertEqual((routes[key].auth, routes[key].owner), (auth, owner))
+        self.assertFalse(routes[("rails", "GET", "/api/invoices/:id")].mutates)
+        self.assertFalse(routes[("spring", "GET", "/orders")].mutates)  # JDBC createStatement() only reads here
+        sign_ins = {f.snippet for f in findings if f.check_id == "LP-AUTH-010"}
+        self.assertEqual(sign_ins, {"POST /login", "POST /api/login"})
+        self.assertFalse(any(f.check_id == "LP-AUTHZ-003" for f in findings))  # router-level middleware is fine
+
+    def test_backends_clean(self):
+        _, routes = self.load("clean-polyglot")
+        for key in (("spring", "DELETE", "/api/invoices/{id}"), ("rails", "DELETE", "/api/invoices/:id"),
+                    ("laravel", "DELETE", "/api/orders/{order}"), ("aspnet", "DELETE", "/api/invoices/{id}")):
+            with self.subTest(key):
+                self.assertEqual((routes[key].auth, routes[key].owner), ("yes", "yes"))
+        self.assertEqual((routes[("go", "GET", "/api/orders/:id")].auth, routes[("go", "GET", "/api/orders/:id")].owner), ("mw", "yes"))
+        self.assertEqual(routes[("laravel", "POST", "/api/login")].rate_limit, "mw")
+        self.assertEqual(routes[("rails", "POST", "/login")].rate_limit, "yes")
+        self.assertEqual(routes[("aspnet", "GET", "/api/profile")].auth, "yes")  # MapGroup(...).RequireAuthorization()
 
 
 class RouteMatrix(unittest.TestCase):

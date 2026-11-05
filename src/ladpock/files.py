@@ -20,7 +20,7 @@ IGNORE_DIRS = {
     ".expo", "Pods", ".gradle", "bower_components",
 }
 
-JS_EXT = frozenset({".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte", ".astro"})
+JS_EXT = frozenset({".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts", ".vue", ".svelte", ".astro"})
 PY_EXT = frozenset({".py"})
 CODE_EXT = JS_EXT | PY_EXT | {".go", ".rb", ".php", ".java", ".kt", ".cs", ".rs", ".swift", ".dart", ".scala", ".m"}
 CONFIG_EXT = frozenset({".json", ".jsonc", ".yml", ".yaml", ".toml", ".ini", ".cfg", ".conf", ".xml"})
