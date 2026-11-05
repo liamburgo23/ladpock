@@ -27,13 +27,14 @@ CRITICAL (6)
 
 ## What it does
 
-- **173 built-in checks** across secrets, sign-in, authorization, API abuse and cost, injection, payments,
+- **191 built-in checks** across secrets, sign-in, authorization, API abuse and cost, injection, payments,
   crypto, config, supply chain, and AI-generated code smells. Run `ladpock checks` for the list, or see
   [docs/CHECKS.md](docs/CHECKS.md).
 - **A route matrix** for Next.js (App Router, Pages API and server actions), SvelteKit, Remix, Nuxt, Astro, Express,
   Fastify, Hono, Koa, NestJS, FastAPI, Flask, Django, Spring, Go (net/http, chi, gin, echo, fiber, gorilla/mux), Rails,
   Laravel and ASP.NET, plus backends with no server of your own: tRPC, Convex, GraphQL resolvers, Firebase Cloud Functions,
-  Supabase Edge Functions, and Vercel, Netlify, Cloudflare and AWS Lambda functions. It shows every endpoint with its auth, ownership check, validation and rate limiting,
+  Supabase Edge Functions, and Vercel, Netlify, Cloudflare and AWS Lambda functions. Also Rust (Axum, Actix, Rocket), Elysia,
+  Hapi, Sinatra, Symfony, Ktor, JAX-RS (Quarkus, Jersey) and Micronaut. It shows every endpoint with its auth, ownership check, validation and rate limiting,
   and flags the gaps: unauthenticated writes, records fetched by ID without an ownership check, auth only in
   middleware, paid AI endpoints without a login or rate limit.
 - **Checks for how apps get built now:** AI keys in the browser, AI replies run as code or queries, user text in system
@@ -50,8 +51,11 @@ CRITICAL (6)
 - **Desktop and mobile checks** for Electron, Android, iOS, React Native/Expo and Flutter: Node.js in the page,
   exposed IPC, missing CSP, cleartext traffic, debuggable builds, exported components, tokens in plain storage,
   risky WebViews and certificate-check bypasses.
-- **Many languages:** JavaScript/TypeScript, Python, Go, PHP, Ruby, Java/Kotlin, C#, Rust, Dart and Swift, with each
+- **Many languages:** JavaScript/TypeScript, Python, Go, PHP, Ruby, Java/Kotlin, C#, Rust, Dart, Swift and C/C++, with each
   language's own spelling of SQL injection, command injection, unsafe deserialisation, weak crypto and more.
+- **Software that isn't a web app:** buffer overflows, format strings and shell commands in C and C++; `eval`, unsafe
+  deletes, turned-off certificate checks and passwords in shell and PowerShell scripts; programs downloaded over plain HTTP;
+  and Solidity contracts (reentrancy, `tx.origin`, sensitive functions anyone can call, predictable randomness).
 - **More than 50 provider secret formats** (cloud, AI, payment, source-control, messaging and observability tokens),
   masked everywhere they appear.
 - **A Tauri pack and command matrix.** It checks the Content-Security-Policy, capability files (remote access,
@@ -350,7 +354,7 @@ won't replace an existing hook unless you pass `--force`; `ladpock hook remove` 
 ### In CI
 
 ```yaml
-- uses: liamburgo23/ladpock@v0.13.0
+- uses: liamburgo23/ladpock@v0.14.0
   with:
     fail-on: high   # critical, high, medium or low; leave empty to never fail
 ```
@@ -390,8 +394,10 @@ masked, and your folder path isn't included. It does contain code snippets, so s
 | Spring, Go, Rails, Laravel, ASP.NET | Route matrix (annotations, filters, middleware, authorization attributes) and language checks |
 | tRPC, Convex, GraphQL (JavaScript resolvers, NestJS, TypeGraphQL) | Route matrix per procedure, function or resolver |
 | Firebase Functions, Supabase Edge, Vercel, Netlify, Cloudflare, AWS Lambda (Serverless Framework, SAM) | Route matrix per function, plus Supabase and Firebase rules |
+| Rust (Axum, Actix, Rocket), Elysia, Hapi, Sinatra, Symfony, Ktor, JAX-RS, Micronaut | Route matrix |
 | OpenAI, Anthropic, Vercel AI SDK, LangChain | AI key exposure, prompt injection, running AI output, cost abuse |
-| PHP, Ruby, Java, C#, Rust | Language-specific injection, crypto, config and framework-setting checks |
+| C/C++, shell, PowerShell, Solidity | Language-specific checks for memory safety, command injection, unsafe scripts and contract bugs |
+| PHP, Ruby, Java, C#, Rust, Go | Language-specific injection, crypto, config and framework-setting checks |
 | Anything else | Generic checks: secrets, dependencies, injection patterns, config, AI code smells |
 
 Each scan says which stacks got deep checks, so you know how thorough it was.

@@ -4,7 +4,8 @@ actions are read here; Express, Fastify, Hono, NestJS, FastAPI, Flask and
 Django come from server_routes; SvelteKit, Remix, Nuxt and Astro from
 fullstack_routes; Spring, Go, Rails, Laravel and ASP.NET from backend_routes;
 tRPC, Convex, GraphQL, Firebase, Supabase Edge, Vercel, Netlify, Cloudflare and
-AWS Lambda functions from function_routes.
+AWS Lambda functions from function_routes; Rust, Elysia, Hapi, Sinatra, Symfony,
+Ktor, JAX-RS and Micronaut from more_routes.
 
 This is heuristic. It recognises common libraries and patterns, and says "?"
 when it can't tell rather than guessing.
@@ -79,6 +80,7 @@ PUBLIC_PATH = re.compile(
 AUTH_FLOW = re.compile(r"(?i)/(?:login|signin|sign-in|signup|sign-up|register|forgot\w*|otp|magic\w*|password|reset-?password)"
                        r"(?:/|$|-|\?)|(?<!\?)/reset\w*(?:/|$|-|\?)")
 WEBHOOK = re.compile(r"(?i)webhook")
+CRON_PATH = re.compile(r"(?i)/(?:cron|crons|cron-?jobs?|scheduled|schedule/run|jobs/run|tasks/run)(?:/|$|-)")
 
 
 # Frameworks whose app-wide guard decides by path, so a missed path is wide open. Router-level middleware elsewhere
@@ -279,12 +281,17 @@ def analyze(index: FileIndex) -> list[Route]:
     from .backend_routes import analyze_backends
     from .fullstack_routes import analyze_fullstack
     from .function_routes import analyze_functions
+    from .more_routes import analyze_more
     from .server_routes import analyze_servers
 
     routes.extend(analyze_servers(index, Route))
     routes.extend(analyze_fullstack(index))
     routes.extend(analyze_backends(index))
     routes.extend(analyze_functions(index))
+    routes.extend(analyze_more(index))
+    # The generic JavaScript reader also sees app.get(...) in these frameworks' files. The specific reader knows better.
+    specific = {r.file for r in routes if r.kind in ("elysia", "hapi")}
+    routes = [r for r in routes if r.file not in specific or r.kind in ("elysia", "hapi")]
     # The URL that carries tRPC or GraphQL isn't an endpoint of its own: each procedure and resolver is listed instead.
     if any(r.kind == "trpc" for r in routes):
         routes = [r for r in routes if r.kind == "trpc" or not re.search(r"/trpc(?:/|$)", r.path)]
@@ -310,4 +317,6 @@ def gaps(route: Route) -> list[str]:
         out.append("sign-in flow without rate limit")
     if route.webhook and route.auth != "sig":
         out.append("webhook not verified")
+    if CRON_PATH.search(route.path) and route.auth == "no":
+        out.append("job endpoint with no secret")
     return out

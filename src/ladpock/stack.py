@@ -21,6 +21,8 @@ LABELS = {
     "laravel": "Laravel", "ruby": "Ruby", "rails": "Rails", "java": "Java/Kotlin", "spring": "Spring", "dotnet": ".NET",
     "aspnet": "ASP.NET", "go-web": "Go web server", "trpc": "tRPC", "convex": "Convex", "graphql": "GraphQL",
     "vercel": "Vercel Functions", "netlify": "Netlify Functions", "cloudflare": "Cloudflare Workers", "aws-lambda": "AWS Lambda",
+    "rust-web": "Rust web server", "elysia": "Elysia", "hapi": "Hapi", "sinatra": "Sinatra", "symfony": "Symfony", "ktor": "Ktor", "jaxrs": "JAX-RS/Micronaut",
+    "c-cpp": "C/C++", "solidity": "Solidity", "shell": "Shell scripts",
 }
 
 # Stacks with dedicated, framework-aware checks. Everything else still gets the
@@ -29,7 +31,7 @@ DEEP_PACKS = {"nextjs", "react", "supabase", "firebase", "stripe", "github-actio
               "hono", "koa", "nestjs", "fastapi", "flask", "django", "docker", "kubernetes", "terraform", "electron",
               "react-native", "expo", "android", "ios", "flutter", "sveltekit", "remix", "nuxt", "astro", "spring", "rails",
               "laravel", "aspnet", "go-web", "trpc", "convex", "graphql", "vercel", "netlify", "cloudflare", "aws-lambda", "openai",
-              "anthropic", "ai-sdk", "nextauth", "vite"}
+              "anthropic", "ai-sdk", "nextauth", "vite", "rust-web", "elysia", "hapi", "sinatra", "symfony", "ktor", "jaxrs", "c-cpp", "solidity", "shell"}
 
 _NPM = {
     "next": "nextjs", "react": "react", "vite": "vite", "express": "express", "fastify": "fastify",
@@ -45,7 +47,8 @@ _NPM = {
     "@trpc/server": "trpc", "convex": "convex", "graphql": "graphql", "@apollo/server": "graphql", "apollo-server": "graphql",
     "graphql-yoga": "graphql", "type-graphql": "graphql", "@nestjs/graphql": "graphql", "mercurius": "graphql",
     "wrangler": "cloudflare", "@cloudflare/workers-types": "cloudflare", "@netlify/functions": "netlify", "@vercel/node": "vercel",
-    "serverless": "aws-lambda", "aws-lambda": "aws-lambda", "firebase-functions": "firebase",
+    "serverless": "aws-lambda", "aws-lambda": "aws-lambda", "firebase-functions": "firebase", "elysia": "elysia", "@hapi/hapi": "hapi",
+    "hardhat": "solidity", "@openzeppelin/contracts": "solidity",
 }
 _PY = {
     "fastapi": "fastapi", "flask": "flask", "django": "django", "supabase": "supabase", "stripe": "stripe",
@@ -142,14 +145,22 @@ def detect(index: FileIndex) -> list[str]:
             add("php")
             if "laravel/framework" in (index.read(rel) or ""):
                 add("laravel")
+            if "symfony/framework-bundle" in (index.read(rel) or ""):
+                add("symfony")
         elif name == "Gemfile":
             add("ruby")
             if re.search(r"""(?m)^\s*gem\s+['"]rails['"]""", index.read(rel) or ""):
                 add("rails")
+            if re.search(r"""(?m)^\s*gem\s+['"]sinatra['"]""", index.read(rel) or ""):
+                add("sinatra")
         elif name in ("pom.xml", "build.gradle", "build.gradle.kts"):
             add("java")
             if re.search(r"spring-boot|springframework", index.read(rel) or ""):
                 add("spring")
+            if re.search(r"io\.ktor", index.read(rel) or ""):
+                add("ktor")
+            if re.search(r"quarkus|micronaut|jersey|jakarta\.ws\.rs|javax\.ws\.rs", index.read(rel) or ""):
+                add("jaxrs")
         elif name.endswith(".csproj"):
             add("dotnet")
             if "Microsoft.NET.Sdk.Web" in (index.read(rel) or ""):
@@ -164,10 +175,18 @@ def detect(index: FileIndex) -> list[str]:
             add("rust")
             if re.search(r"(?m)^\s*tauri\s*=", index.read(rel) or ""):
                 add("tauri")
+            if re.search(r"(?m)^\s*(?:axum|actix-web|rocket)\s*=", index.read(rel) or ""):
+                add("rust-web")
         if rel.startswith("supabase/") or "/supabase/migrations/" in rel:
             add("supabase")
         if rel.startswith("convex/") and name.endswith((".ts", ".js")):
             add("convex")
+        if name.endswith((".c", ".cc", ".cpp", ".cxx")):
+            add("c-cpp")
+        elif name.endswith(".sol") or name in ("foundry.toml",) or name.startswith("hardhat.config."):
+            add("solidity")
+        elif name.endswith((".sh", ".bash", ".ps1")):
+            add("shell")
         if rel.startswith(".github/workflows/"):
             add("github-actions")
     if "nextjs" in found and "react" not in found:

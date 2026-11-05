@@ -61,6 +61,10 @@ EXPECTED_FUNCTIONS = {
     "LP-VIBE-007", "LP-AUTHZ-011", "LP-CFG-010", "LP-CFG-011", "LP-INFRA-006", "LP-SUP-008", "LP-SUP-009", "LP-SUP-010", "LP-SUP-011",
     "LP-SUP-012", "LP-SUP-013",
 }
+EXPECTED_NATIVE = {
+    "LP-NATIVE-001", "LP-NATIVE-002", "LP-NATIVE-003", "LP-NATIVE-004", "LP-NATIVE-005", "LP-SHELL-001", "LP-SHELL-002", "LP-SHELL-003",
+    "LP-SHELL-004", "LP-SHELL-005", "LP-RUST-002", "LP-RUST-003", "LP-SOL-001", "LP-SOL-002", "LP-SOL-003", "LP-SOL-004", "LP-SOL-005", "LP-SOL-006",
+}
 # Produced only with network access or git, covered by their own tests.
 NOT_IN_OFFLINE_FIXTURE = {"LP-SEC-004", "LP-DEP-001", "LP-SUP-005"} | {f"LP-LIVE-{i:03d}" for i in range(1, 17)}  # live: test_probe
 
@@ -90,7 +94,7 @@ class VulnerableFixture(unittest.TestCase):
 
     def test_catalogue_is_fully_covered(self):
         untested = (set(REGISTRY) - EXPECTED_VULN - EXPECTED_TAURI - EXPECTED_NODE - EXPECTED_PYTHON - EXPECTED_INFRA
-                    - EXPECTED_APPS - EXPECTED_POLYGLOT - EXPECTED_FUNCTIONS - NOT_IN_OFFLINE_FIXTURE)
+                    - EXPECTED_APPS - EXPECTED_POLYGLOT - EXPECTED_FUNCTIONS - EXPECTED_NATIVE - NOT_IN_OFFLINE_FIXTURE)
         self.assertEqual(sorted(untested), [], "add these checks to a vulnerable fixture")
 
     def test_secrets_are_masked_in_output(self):
@@ -115,7 +119,7 @@ class VulnerableFixture(unittest.TestCase):
 class CleanFixture(unittest.TestCase):
     def test_clean_apps_have_no_findings(self):
         for name in ("clean-next-supabase", "clean-tauri", "clean-node-api", "clean-python-web", "clean-infra",
-                     "clean-electron", "clean-mobile", "clean-polyglot", "clean-fullstack", "clean-functions", "clean-starters"):
+                     "clean-electron", "clean-mobile", "clean-polyglot", "clean-fullstack", "clean-functions", "clean-starters", "clean-native"):
             with self.subTest(name), materialize(name) as tmp:
                 findings, errors = run_all(_context(Path(tmp) / name))
                 self.assertEqual(errors, [])
@@ -257,6 +261,56 @@ class PolyglotFixture(unittest.TestCase):
         self.assertEqual(files("LP-AUTH-003"), {"php", "java"})  # md5 / MessageDigest for passwords
         self.assertIn("java", files("LP-CFG-001"))  # @CrossOrigin(origins = "*")
         self.assertIn("go", files("LP-CRYPTO-001"))  # math/rand for a reset token
+
+
+class NativeAndMoreFrameworks(unittest.TestCase):
+    """Software that isn't a web app, and the remaining popular frameworks."""
+
+    def load(self, name):
+        with materialize(name) as tmp:
+            root = Path(tmp) / name
+            findings, errors = run_all(_context(root))
+            routes = {(r.kind, r.method, r.path): r for r in analyze(FileIndex(root))}
+        self.assertEqual(errors, [])
+        return findings, routes
+
+    def test_checks_fire(self):
+        findings, _ = self.load("vuln-native")
+        self.assertEqual(sorted(EXPECTED_NATIVE - {f.check_id for f in findings}), [])
+
+    def test_routes_vulnerable(self):
+        findings, routes = self.load("vuln-native")
+        expected = {
+            ("axum", "GET", "/orders"): ("yes", "n/a"), ("axum", "POST", "/orders"): ("no", "no"), ("axum", "DELETE", "/orders/:id"): ("no", "no"),
+            ("axum", "GET", "/api/me/orders/:id"): ("yes", "no"),
+            ("actix", "POST", "/notes"): ("no", "no"), ("actix", "GET", "/notes/{id}"): ("yes", "no"),
+            ("rocket", "POST", "/api/invoices"): ("no", "no"),
+            ("elysia", "DELETE", "/api/things/:id"): ("no", "no"), ("elysia", "POST", "/api/v2/things"): ("no", "no"),
+            ("hapi", "POST", "/api/widgets"): ("no", "no"), ("hapi", "DELETE", "/api/widgets/{id}"): ("yes", "no"),
+            ("sinatra", "POST", "/comments"): ("no", "no"), ("sinatra", "DELETE", "/comments/:id"): ("yes", "yes"),
+            ("symfony", "POST", "/api/orders"): ("no", "no"), ("symfony", "GET", "/api/orders/{id}"): ("yes", "no"),
+            ("ktor", "POST", "/api/tickets"): ("no", "no"), ("ktor", "DELETE", "/api/tickets/{id}"): ("mw", "no"),
+            ("jaxrs", "POST", "/api/accounts"): ("no", "no"), ("jaxrs", "GET", "/api/accounts/{id}"): ("yes", "no"),
+        }
+        for key, (auth, owner) in expected.items():
+            with self.subTest(key):
+                self.assertIn(key, routes)
+                self.assertEqual((routes[key].auth, routes[key].owner), (auth, owner))
+        where = {(f.check_id, f.snippet) for f in findings}
+        self.assertIn(("LP-AUTHZ-001", "POST /notes"), where)
+        self.assertIn(("LP-AUTHZ-001", "POST /api/tickets"), where)
+
+    def test_routes_clean(self):
+        _, routes = self.load("clean-native")
+        for key, auth, owner in (
+            (("axum", "DELETE", "/orders/:id"), "yes", "yes"), (("sinatra", "DELETE", "/comments/:id"), "yes", "yes"),
+            (("symfony", "DELETE", "/api/orders/{id}"), "yes", "yes"), (("ktor", "DELETE", "/api/tickets/{id}"), "yes", "yes"),
+            (("jaxrs", "DELETE", "/api/accounts/{id}"), "yes", "yes"),
+        ):
+            with self.subTest(key):
+                self.assertIn(key, routes)
+                self.assertEqual((routes[key].auth, routes[key].owner), (auth, owner))
+        self.assertTrue(routes[("jaxrs", "GET", "/api/accounts/plans")].public)  # @PermitAll beats the class's @RolesAllowed
 
 
 class Starters(unittest.TestCase):

@@ -22,11 +22,12 @@ IGNORE_DIRS = {
 
 JS_EXT = frozenset({".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts", ".vue", ".svelte", ".astro"})
 PY_EXT = frozenset({".py"})
-CODE_EXT = JS_EXT | PY_EXT | {".go", ".rb", ".php", ".java", ".kt", ".cs", ".rs", ".swift", ".dart", ".scala", ".m"}
+CODE_EXT = JS_EXT | PY_EXT | {".go", ".rb", ".php", ".java", ".kt", ".cs", ".rs", ".swift", ".dart", ".scala", ".m", ".mm", ".c", ".h", ".cc", ".cpp",
+                              ".cxx", ".hpp", ".hh", ".sol", ".ex", ".exs", ".lua", ".pl"}
 CONFIG_EXT = frozenset({".json", ".jsonc", ".yml", ".yaml", ".toml", ".ini", ".cfg", ".conf", ".xml"})
 TEXT_EXT = CODE_EXT | CONFIG_EXT | {
-    ".sql", ".md", ".mdc", ".txt", ".html", ".htm", ".css", ".scss", ".rules", ".sh", ".ps1",
-    ".bat", ".lock", ".prisma", ".graphql", ".gql", ".tf", ".hcl", ".properties", ".mod", ".sum",
+    ".sql", ".md", ".mdc", ".txt", ".html", ".htm", ".css", ".scss", ".rules", ".sh", ".bash", ".zsh", ".ps1", ".psm1",
+    ".bat", ".cmd", ".lock", ".prisma", ".graphql", ".gql", ".tf", ".hcl", ".properties", ".mod", ".sum",
     # server templates
     ".ejs", ".hbs", ".handlebars", ".pug", ".jade", ".njk", ".jinja", ".jinja2", ".j2", ".twig", ".erb", ".liquid",
     ".mustache",

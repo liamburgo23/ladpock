@@ -46,6 +46,17 @@ WORST_CASES = {
     "main.go": 'r.HandleFunc("/a", func(w, r) {\n',
     "server.py": '@app.route("/a")\ndef a():\n',
     "server.js": 'app.get("/a", (req, res) => {\n',
+    "axum.rs": 'use axum;\n.route("/a", get(b))\nfn b(x: y) {\n',
+    "actix.rs": 'use actix_web;\n#[get("/a")]\nasync fn b() {\n',
+    "elysia.ts": 'import "elysia";\n.get("/a", () => {\n.group("/b", (app) => {\n',
+    "hapi.js": 'require("@hapi/hapi");\nserver.route({ method: "GET", path: "/a",\n',
+    "sinatra.rb": 'require "sinatra"\nget "/a" do\nbefore do\n',
+    "Sym.php": '<?php // Symfony Route\nclass A {\n#[Route("/a")]\npublic function b() {\n',
+    "routes.kt": 'routing {\nroute("/a") {\nget("/b") {\nauthenticate("c") {\n',
+    "Res.java": 'import jakarta.ws.rs.*;\n@Path("/a") public class A {\n@GET public void b() {\n',
+    "Vault.sol": 'function withdraw() public { x.call{value: 1}(""); a[b] = 1;\n',
+    "a.c": "strcpy(a, b); printf(x); system(y);\n",
+    "a.sh": 'eval "$x"; rm -rf "$y"; curl -k z; sshpass -p abcd e\n',
 }
 
 

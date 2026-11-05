@@ -6,12 +6,12 @@ import re
 from typing import Iterator
 
 from ..models import Finding, Severity
-from ..routes import AUTH_FLOW, MUTATING, PATH_MATCHED_MIDDLEWARE, Route
+from ..routes import AUTH_FLOW, CRON_PATH, MUTATING, PATH_MATCHED_MIDDLEWARE, Route
 from .base import CheckInfo, ScanContext, check
 
 STACKS = ("nextjs", "express", "fastify", "hono", "koa", "nestjs", "fastapi", "flask", "django", "sveltekit", "remix",
           "nuxt", "astro", "spring", "go", "rails", "laravel", "dotnet", "trpc", "convex", "graphql", "firebase", "supabase",
-          "vercel", "netlify", "cloudflare", "aws-lambda")
+          "vercel", "netlify", "cloudflare", "aws-lambda", "rust-web", "elysia", "hapi", "sinatra", "symfony", "ktor", "jaxrs")
 
 
 def _finding(ctx: ScanContext, info: CheckInfo, route: Route, **kwargs) -> Finding:
@@ -98,7 +98,6 @@ def debug_endpoints(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
             yield _finding(ctx, info, route, confidence="medium" if route.db or route.mutates else "low")
 
 
-CRON_PATH = re.compile(r"(?i)/(?:cron|crons|cron-?jobs?|scheduled|schedule/run|jobs/run|tasks/run)(?:/|$|-)")
 CRON_GUARD = re.compile(r"(?i)CRON_SECRET|x-vercel-cron|x-appengine-cron|x-cloudscheduler|\bauthorization\b|\bverifySignature\b|\bsecret\b")
 
 

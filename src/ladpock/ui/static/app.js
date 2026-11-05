@@ -1340,22 +1340,48 @@ async function drawRoutes(container, id, view) {
   if (view !== state.view) return;
   if (!data.routes.length && !data.commands.length) {
     container.replaceChildren(h("div", { class: "card empty" }, h("h2", null, "No routes or commands found"),
-      h("p", { class: "muted" }, "This view understands Next.js, SvelteKit, Remix, Nuxt, Astro, Express, Fastify, Hono, Koa, NestJS, FastAPI, Flask, Django, Spring, Go, Rails, Laravel, ASP.NET, tRPC, Convex, GraphQL, Firebase Functions, Supabase Edge Functions, Vercel, Netlify, Cloudflare and AWS Lambda routes, and Tauri commands.")));
+      h("p", { class: "muted" }, "This view understands Next.js, SvelteKit, Remix, Nuxt, Astro, Express, Fastify, Hono, Koa, NestJS, FastAPI, Flask, Django, Spring, Go, Rails, Laravel, ASP.NET, tRPC, Convex, GraphQL, Firebase Functions, Supabase Edge Functions, Vercel, Netlify, Cloudflare, AWS Lambda, Rust (Axum, Actix, Rocket), Elysia, Hapi, Sinatra, Symfony, Ktor, JAX-RS and Micronaut routes, and Tauri commands.")));
     return;
   }
   const cell = (value) => h("td", { class: value === "no" || value === "none" ? "cell-no" : value === "yes" || value === "sig" || value === "rls" || value === "dir" ? "cell-yes" : value === "mw" || value === "ext" ? "cell-mid" : "faint" }, value);
   container.replaceChildren();
   if (data.commands.length) container.append(...commandsTable(data.commands, cell));
   if (!data.routes.length) return;
+  const withGaps = data.routes.filter((r) => r.gaps.length).length;
+  const kinds = [...new Set(data.routes.map((r) => r.kind))].sort();
+  let onlyGaps = false;
+  const search = h("input", { type: "search", placeholder: "Search paths or files", "aria-label": "Search routes" });
+  const kind = kinds.length > 1 ? h("select", { "aria-label": "Kind of route" }, h("option", { value: "" }, "All kinds"), kinds.map((k) => h("option", { value: k }, k))) : null;
+  const toggle = withGaps ? h("button", { class: "filter", "aria-pressed": "false", onclick: () => {
+    onlyGaps = !onlyGaps;
+    toggle.setAttribute("aria-pressed", String(onlyGaps));
+    draw();
+  } }, `Only the ${withGaps} with gaps`) : null;
+  const body = h("tbody");
+  const count = h("p", { class: "faint" });
+  const draw = () => {
+    const q = search.value.trim().toLowerCase();
+    const shown = data.routes.filter((r) => (!onlyGaps || r.gaps.length) && (!kind || !kind.value || r.kind === kind.value)
+      && (!q || `${r.method} ${r.path} ${r.file}`.toLowerCase().includes(q)));
+    count.textContent = `${plural(data.routes.length, "endpoint")}, ${withGaps} with gaps.` + (shown.length < data.routes.length ? ` Showing ${shown.length}.` : "");
+    body.replaceChildren(...(shown.length ? shown.map((r) => h("tr", null,
+      h("td", { class: "mono" }, r.method),
+      h("td", null, h("div", { class: "mono" }, r.path), h("div", { class: "mono faint small-print" }, `${r.file}:${r.line}`, kinds.length > 1 ? ` · ${r.kind}` : "")),
+      cell(r.auth), cell(r.owner), cell(r.validation), cell(r.rate_limit),
+      h("td", { style: r.gaps.length ? "color:var(--medium)" : "" }, r.gaps.join(", ") || "–", r.notes && r.notes.length ? h("div", { class: "faint small-print" }, r.notes.join(", ")) : null)))
+      : [h("tr", null, h("td", { colspan: "7", class: "faint" }, "Nothing matches these filters."))]));
+  };
+  search.addEventListener("input", draw);
+  if (kind) kind.addEventListener("change", draw);
+  draw();
   container.append(
     h("h2", null, "Routes"),
-    h("div", { class: "card flush table-wrap" }, h("table", null,
+    count,
+    h("div", { class: "toolbar" }, toggle, search, kind),
+    h("div", { class: "card flush table-wrap", style: "margin-top:10px" }, h("table", null,
       h("thead", null, h("tr", null, ["Method", "Path", "Auth", "Owner check", "Validation", "Rate limit", "Gaps"].map((t) => h("th", null, t)))),
-      h("tbody", null, data.routes.map((r) => h("tr", null,
-        h("td", { class: "mono" }, r.method), h("td", { class: "mono", title: `${r.file}:${r.line}` }, r.path),
-        cell(r.auth), cell(r.owner), cell(r.validation), cell(r.rate_limit),
-        h("td", { style: r.gaps.length ? "color:var(--medium)" : "" }, r.gaps.join(", ") || "–")))))),
-    h("p", { class: "faint" }, "Auth: yes = checked in the handler, mw = only in middleware, sig = webhook signature. Owner: rls = relies on Supabase Row Level Security. This is read from your current code and is heuristic: treat “no” as “go and look”."));
+      body)),
+    h("p", { class: "faint" }, "Auth: yes = checked in the handler, mw = only in middleware or a gateway in front of it, sig = webhook signature. Owner: rls = relies on Supabase Row Level Security. This is read from your current code and is heuristic: treat “no” as “go and look”."));
 }
 
 function commandsTable(commands, cell) {
@@ -1614,6 +1640,15 @@ function renderHelp(section) {
 }
 
 // ---------- start ----------
+
+// LadPock makes a new link each time it starts. Opening it in a tab that's already here only changes the hash, so nothing
+// reloads by itself, and the page would carry on with the old token and the old code.
+window.addEventListener("hashchange", () => {
+  if (/token=/.test(location.hash)) {
+    readToken();
+    location.reload();
+  }
+});
 
 state.token = readToken();
 if (!state.token) showLocked();

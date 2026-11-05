@@ -326,6 +326,20 @@ Whole-file regexes use bounded repeats. `tests/test_slow_input.py` keeps the wor
 fetch their newest release on each start, so `npx -y server` with no version is a standing risk (`LP-SUP-011`). `.vscode/tasks.json`
 with `runOn: folderOpen`, devcontainer commands and AI tool hooks can run code when a project is opened (`LP-SUP-012`).
 
+## Beyond web apps, and checking against correct code (0.14.0)
+
+**More route tables (`more_routes.py`).** Rust, Elysia, Hapi, Sinatra, Symfony, Ktor, JAX-RS and Micronaut. Each comes down to the
+same three questions, with the framework's own spelling of how a route declares its login check: an Axum extractor parameter, a
+`route_layer` on the router, `authenticate("jwt") { }` in Ktor, `#[IsGranted]` or `access_control` in Symfony, `@RolesAllowed` on
+a class with `@PermitAll` as the exception in JAX-RS. Rocket's `<id>` is rewritten to `{id}` so the other code sees one spelling.
+
+**Other software (`checks/native.py`).** C and C++ are now read at all (`CODE_EXT`), so secrets and generic checks apply to them too.
+`LP-SHELL-003` is low confidence because `rm -rf "$DIR"` is usually fine, until `$DIR` is empty.
+
+**Correct code as a test (`tests/fixtures/clean-starters`).** A fixture of idiomatic code in the style of the usual starter templates,
+across twelve stacks. It's a stand-in until a study on real repositories: not as good, but it needs no downloads, and it runs on
+every commit. It found four false positives on its first run.
+
 ## Next milestones
 
 1. **Paid online scanners.** Optional integrations with commercial scanners using your own account, behind the same

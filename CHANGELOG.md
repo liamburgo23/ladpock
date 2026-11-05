@@ -3,6 +3,23 @@
 All notable changes to LadPock. Versions follow [semantic versioning](https://semver.org/); while LadPock is below
 1.0, minor versions can include changes to checks and grades.
 
+## [0.14.0] - 2026-11-05
+
+### Added
+- Route matrix for Rust (Axum, Actix, Rocket), Elysia, Hapi, Sinatra, Symfony, Ktor, JAX-RS (Quarkus, Jersey) and Micronaut.
+- C and C++ are now scanned: functions with no bounds check, format strings from variables, shell commands the program builds
+  itself, and temporary file names that can be guessed.
+- Checks for shell and PowerShell scripts: running text as a command, files writable by everyone, deleting a path that could
+  be empty, turned-off certificate and host key checks, and passwords on a command line.
+- Checks for Solidity contracts: `tx.origin`, reentrancy, sensitive functions anyone can call, predictable randomness, old
+  compiler versions, `delegatecall` and `selfdestruct`.
+- Checks for programs downloaded over plain HTTP, and shell commands and SQL built with `format!` in Rust.
+- The Routes tab shows where each route is defined, can be searched and filtered by kind, and can show only routes with gaps.
+
+### Fixed
+- Pasting LadPock's new link into a tab already open on it, after a restart, left the page locked until you reloaded.
+- The dashboard no longer scrolls sideways at phone width when a project's folder path is long.
+
 ## [0.13.0] - 2026-11-05
 
 ### Added
@@ -177,6 +194,7 @@ All notable changes to LadPock. Versions follow [semantic versioning](https://se
   EPSS with "new since you last looked"; hallucinated-package detection; grades; fix prompts; JSON and SARIF
   output; and support for Gitleaks, OSV-Scanner and Opengrep.
 
+[0.14.0]: https://github.com/liamburgo23/ladpock/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/liamburgo23/ladpock/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/liamburgo23/ladpock/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/liamburgo23/ladpock/compare/v0.10.0...v0.11.0

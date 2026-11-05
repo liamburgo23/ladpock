@@ -321,3 +321,10 @@ a.score-tile:hover { box-shadow: 0 0 0 1px var(--accent); }
   .project-row, .finding summary, .finding .body, .check-item, .folder-row, .group-head, .plan-step, .gap-row { padding-left: 14px; padding-right: 14px; }
   .btn.big { width: 100%; }
 }
+.small-print { font-size: 12px; margin-top: 2px; overflow-wrap: anywhere; }
+/* Long folder paths and chips mustn't push a narrow page wider than the screen. */
+.stack, .grow { min-width: 0; }
+.mono { overflow-wrap: anywhere; }
+@media (max-width: 720px) {
+  .row { flex-wrap: wrap; }
+}
