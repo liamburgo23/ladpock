@@ -80,6 +80,8 @@ PUBLIC_PATH = re.compile(
 AUTH_FLOW = re.compile(r"(?i)/(?:login|signin|sign-in|signup|sign-up|register|forgot\w*|otp|magic\w*|password|reset-?password)"
                        r"(?:/|$|-|\?)|(?<!\?)/reset\w*(?:/|$|-|\?)")
 WEBHOOK = re.compile(r"(?i)webhook")
+# A URL that holds a long secret is its own login: /invite/{token}, /r/:signature. A route code is not, because it can be guessed.
+CAPABILITY = re.compile(r"(?i)[\[{:<]\s*(?:\w+:)?\w*(?:token|secret|signature|invite|magic)\w*")
 CRON_PATH = re.compile(r"(?i)/(?:cron|crons|cron-?jobs?|scheduled|schedule/run|jobs/run|tasks/run)(?:/|$|-)")
 
 
@@ -114,6 +116,10 @@ class Route:
     @property
     def webhook(self) -> bool:
         return bool(WEBHOOK.search(self.path))
+
+    @property
+    def capability(self) -> bool:
+        return bool(CAPABILITY.search(self.path))
 
     def to_dict(self) -> dict:
         return {k: getattr(self, k) for k in (
@@ -279,6 +285,7 @@ def analyze(index: FileIndex) -> list[Route]:
                 route = _assess(route, code[match.start():end], code, auth_names, Middleware())
                 routes.append(route)
     from .backend_routes import analyze_backends
+    from .config import apply_to_routes
     from .fullstack_routes import analyze_fullstack
     from .function_routes import analyze_functions
     from .more_routes import analyze_more
@@ -297,6 +304,7 @@ def analyze(index: FileIndex) -> list[Route]:
         routes = [r for r in routes if r.kind == "trpc" or not re.search(r"/trpc(?:/|$)", r.path)]
     if any(r.kind == "graphql" for r in routes):
         routes = [r for r in routes if r.kind == "graphql" or not re.search(r"/graphql/?$", r.path)]
+    routes = apply_to_routes(routes, index)
     routes.sort(key=lambda r: (r.kind == "action", r.path, METHODS.index(r.method) if r.method in METHODS else 99))
     return routes
 
@@ -305,7 +313,7 @@ def gaps(route: Route) -> list[str]:
     """Short labels for what a route is missing, used in reports."""
     out = []
     needs_auth = not route.public_path and (route.method in MUTATING or route.db or route.paid_api)
-    if needs_auth and route.auth == "no" and not route.webhook:
+    if needs_auth and route.auth == "no" and not route.webhook and not route.capability:
         out.append("no auth")
     if route.owner == "no" and route.auth in ("yes", "mw"):
         out.append("no ownership check")

@@ -21,6 +21,7 @@ Generated with `ladpock checks --markdown`.
 | `LP-SEC-007` | Session or app signing key written in the code | high | all projects |
 | `LP-SEC-008` | All environment variables sent out | critical | all projects |
 | `LP-SEC-009` | Build copies every secret into the front end | critical | all projects |
+| `LP-SEC-010` | Private key or credentials file in the repository | critical | all projects |
 | `LP-SHELL-005` | Password written on a command line | high | all projects |
 | `LP-TF-005` | Password or key written in infrastructure code | high | all projects |
 

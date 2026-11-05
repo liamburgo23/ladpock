@@ -21,7 +21,16 @@ def _b64(data: dict) -> str:
     return base64.urlsafe_b64encode(json.dumps(data, separators=(",", ":")).encode()).decode().rstrip("=")
 
 
+def _key_block(kind: str, newline: str = "\n") -> str:
+    return newline.join([f"-----BEGIN {kind}PRIVATE KEY-----", "LadPockFixtureNotARealKey", f"-----END {kind}PRIVATE KEY-----"])
+
+
 FAKES = {
+    "{{FAKE_RSA_PRIVATE_KEY}}": _key_block("RSA "),
+    "{{FAKE_OPENSSH_PRIVATE_KEY}}": _key_block("OPENSSH "),
+    "{{FAKE_PKCS8_PRIVATE_KEY}}": _key_block(""),
+    "{{FAKE_JSON_PRIVATE_KEY}}": _key_block("", "\\n"),
+    "{{FAKE_CREDENTIAL}}": "LadPock" + "FixtureCredential",
     "{{FAKE_STRIPE_SECRET}}": "sk_" + "live_" + "LadPockFixture" + "Q1w2E3r4T5y6U7",
     "{{FAKE_OPENAI_KEY}}": "sk-" + "proj-" + "LadPockFixture" + "A1b2C3d4E5f6G7h8I9j0K1l2",
     "{{FAKE_GITHUB_TOKEN}}": "ghp_" + "LadPockFixtureToken" + "1a2b3c4d5e6f7g8h9i",

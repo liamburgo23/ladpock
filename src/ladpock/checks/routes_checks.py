@@ -28,7 +28,7 @@ def _finding(ctx: ScanContext, info: CheckInfo, route: Route, **kwargs) -> Findi
 )
 def unauthenticated_mutation(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
     for route in ctx.routes:
-        if route.auth == "no" and route.mutates and not route.public_path and not route.webhook:
+        if route.auth == "no" and route.mutates and not route.public_path and not route.webhook and not route.capability:
             yield _finding(ctx, info, route)
 
 
@@ -72,7 +72,7 @@ def _name_of(path: str) -> str:
 )
 def unauthenticated_private_read(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
     for route in ctx.routes:
-        if route.auth != "no" or not route.db or route.mutates or route.public_path or route.webhook or route.method not in ("GET", "ANY"):
+        if route.auth != "no" or not route.db or route.mutates or route.public_path or route.webhook or route.capability or route.method not in ("GET", "ANY"):
             continue
         name = _name_of(route.path)
         if PRIVATE_DATA.search(name) and not PUBLIC_CONTENT.search(name):

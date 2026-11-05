@@ -11,3 +11,4 @@ venv/
 !tests/fixtures/**/.env*
 .DS_Store
 ladpock-report.*
+ladpock-report-*

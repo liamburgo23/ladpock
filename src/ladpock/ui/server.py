@@ -350,6 +350,13 @@ def project_payload(app: App, db: DB, project_id: int) -> dict:
     summary = json.loads(scan["summary"] or "{}") if scan else {}
     checked = db.human_checks(project_id)
     human = [{"id": i, "text": t, "checked_at": checked.get(i)} for i, t in items_for(set(stack))]
+    accounts = ((summary.get("live") or {}).get("accounts") or {}) if scan else {}
+    if accounts.get("records_checked"):
+        # The two-account check tried exactly this. It can only try what it could find, so it informs the tick, not replaces it.
+        for item in human:
+            if item["id"] == "H-11":
+                item["evidence"] = (f"LadPock tried {accounts['records_checked']} record(s) with two test accounts in the last scan: "
+                                    f"{accounts.get('exposed', 0)} opened, {accounts.get('protected', 0)} refused.")
     job = app.running_job(project_id)
     return {
         "project": _project_summary(db, row, {}),

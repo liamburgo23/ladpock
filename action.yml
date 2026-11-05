@@ -20,6 +20,9 @@ inputs:
   offline:
     description: Set to true to skip the online vulnerability lookup
     default: "false"
+  baseline:
+    description: A file made with `ladpock scan --write-baseline`. Findings listed in it don't fail the job or get marked, so only new ones do.
+    default: ""
 
 outputs:
   grade:
@@ -31,6 +34,9 @@ outputs:
   findings:
     description: How many findings are open
     value: ${{ steps.scan.outputs.findings }}
+  new:
+    description: How many of those aren't in the baseline
+    value: ${{ steps.scan.outputs.new }}
   sarif-file:
     description: The results file
     value: ${{ inputs.sarif-file }}
@@ -54,8 +60,10 @@ runs:
         LP_FAIL_ON: ${{ inputs.fail-on }}
         LP_SARIF: ${{ inputs.sarif-file }}
         LP_OFFLINE: ${{ inputs.offline }}
+        LP_BASELINE: ${{ inputs.baseline }}
       run: |
         args=(scan "$LP_PATH" --profile "$LP_PROFILE" --format sarif -o "$LP_SARIF" --github)
         if [ -n "$LP_FAIL_ON" ]; then args+=(--fail-on "$LP_FAIL_ON"); fi
         if [ "$LP_OFFLINE" = "true" ]; then args+=(--offline); fi
+        if [ -n "$LP_BASELINE" ]; then args+=(--baseline "$LP_BASELINE"); fi
         ladpock "${args[@]}"

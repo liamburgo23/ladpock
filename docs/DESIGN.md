@@ -340,6 +340,22 @@ a class with `@PermitAll` as the exception in JAX-RS. Rocket's `<id>` is rewritt
 across twelve stacks. It's a stand-in until a study on real repositories: not as good, but it needs no downloads, and it runs on
 every commit. It found four false positives on its first run.
 
+## Using it on a real project (0.15.0)
+
+**Baseline.** Without one, turning LadPock on in CI for an existing project is a wall of red that gets switched off. The baseline holds finding
+refs, which are anchored on content, so it survives code moving. `--fail-on` and GitHub marks ignore baselined findings, and the grade
+doesn't, so nothing looks better than it is. A missing or broken baseline protects nothing, because silently passing is the wrong failure.
+
+**`ladpock.toml` (`config.py`).** A heuristic can't know every project's helpers. `auth_functions` and `owner_functions` are looked for between a route's
+line and the next route's, so a helper elsewhere in the file doesn't count. `ignore` moves findings into `suppressed`, which every report counts, because
+"add an ignore" is how an AI assistant might make a scan pass.
+
+**Capability URLs.** `/invite/{token}` is its own login, so routes whose parameter is named token, secret, signature, invite or magic don't get the "no auth"
+findings. `{code}` doesn't count: a short code can be guessed.
+
+**Key files.** `FileIndex` only reads known text types, so `id_rsa` and `server.key` were invisible. `SENSITIVE_FILE` records them during the walk. Only what git tracks
+counts, because a correctly ignored key isn't in the repository. PEM files must really hold a private key, since most `.pem` files are public certificates.
+
 ## Next milestones
 
 1. **Paid online scanners.** Optional integrations with commercial scanners using your own account, behind the same

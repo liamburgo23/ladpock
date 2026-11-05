@@ -63,7 +63,7 @@ EXPECTED_FUNCTIONS = {
 }
 EXPECTED_NATIVE = {
     "LP-NATIVE-001", "LP-NATIVE-002", "LP-NATIVE-003", "LP-NATIVE-004", "LP-NATIVE-005", "LP-SHELL-001", "LP-SHELL-002", "LP-SHELL-003",
-    "LP-SHELL-004", "LP-SHELL-005", "LP-RUST-002", "LP-RUST-003", "LP-SOL-001", "LP-SOL-002", "LP-SOL-003", "LP-SOL-004", "LP-SOL-005", "LP-SOL-006",
+    "LP-SEC-010", "LP-SHELL-004", "LP-SHELL-005", "LP-RUST-002", "LP-RUST-003", "LP-SOL-001", "LP-SOL-002", "LP-SOL-003", "LP-SOL-004", "LP-SOL-005", "LP-SOL-006",
 }
 # Produced only with network access or git, covered by their own tests.
 NOT_IN_OFFLINE_FIXTURE = {"LP-SEC-004", "LP-DEP-001", "LP-SUP-005"} | {f"LP-LIVE-{i:03d}" for i in range(1, 17)}  # live: test_probe
@@ -277,6 +277,15 @@ class NativeAndMoreFrameworks(unittest.TestCase):
     def test_checks_fire(self):
         findings, _ = self.load("vuln-native")
         self.assertEqual(sorted(EXPECTED_NATIVE - {f.check_id for f in findings}), [])
+
+    def test_credential_files(self):
+        findings, _ = self.load("vuln-native")
+        found = {f.file: f for f in findings if f.check_id == "LP-SEC-010"}
+        self.assertEqual(set(found), {"deploy/server.key", "keys/id_ed25519", "firebase/serviceAccountKey.json", ".git-credentials", "deploy/signing.p12"})
+        self.assertEqual(found["firebase/serviceAccountKey.json"].severity.label, "critical")
+        self.assertEqual(found["deploy/signing.p12"].severity.label, "high")  # it might not be real, so a person should look
+        for f in found.values():
+            self.assertNotIn("LadPockFixture", (f.snippet or "") + f.message)  # the name, never the contents
 
     def test_routes_vulnerable(self):
         findings, routes = self.load("vuln-native")

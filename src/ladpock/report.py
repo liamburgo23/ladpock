@@ -116,7 +116,7 @@ def render_scan(result, s: Style, show_human: bool = False) -> str:
         out.append("")
 
     if result.suppressed:
-        out.append(s(f"{len(result.suppressed)} finding(s) hidden by 'ladpock suppress' or ladpock-ignore comments. "
+        out.append(s(f"{len(result.suppressed)} finding(s) hidden by 'ladpock suppress', ladpock-ignore comments or ladpock.toml. "
                      "Check any you didn't add yourself.", "33"))
     if result.errors:
         out.append(s("Warnings", "33"))
@@ -334,9 +334,10 @@ GITHUB_COMMAND = {Severity.CRITICAL: "error", Severity.HIGH: "error", Severity.M
 MAX_ANNOTATIONS = 30
 
 
-def github_annotations(result) -> list[str]:
+def github_annotations(result, known: frozenset[str] = frozenset()) -> list[str]:
     """Workflow commands that mark findings on the changed lines. GitHub parses these from the job's output."""
-    ranked = sorted(result.findings, key=lambda f: -int(f.severity))[:MAX_ANNOTATIONS]
+    fresh = [f for f in result.findings if f.fingerprint not in known]
+    ranked = sorted(fresh, key=lambda f: -int(f.severity))[:MAX_ANNOTATIONS]
     lines = []
     for f in ranked:
         where = f"file={_workflow_property(f.file)}" + (f",line={int(f.line)}" if f.line else "") + "," if f.file else ""
@@ -344,18 +345,21 @@ def github_annotations(result) -> list[str]:
     return lines
 
 
-def github_summary(result) -> str:
+def github_summary(result, known: frozenset[str] = frozenset()) -> str:
     """The Markdown for a job summary. Nothing here comes from a code snippet."""
     card = result.scorecard
     counts = ", ".join(f"{card.counts[s.label]} {s.label}" for s in sorted(Severity, reverse=True) if card.counts.get(s.label))
+    fresh = [f for f in result.findings if f.fingerprint not in known]
     lines = [f"## LadPock: {card.grade} ({card.overall}/100)", "", counts or "No open findings.", ""]
-    if result.findings:
+    if known:
+        lines += [f"**{len(fresh)} new**, {len(result.findings) - len(fresh)} already in the baseline.", ""]
+    if fresh:
         lines += ["| Severity | Finding | Where |", "|---|---|---|"]
-        for f in sorted(result.findings, key=lambda f: -int(f.severity))[:50]:
+        for f in sorted(fresh, key=lambda f: -int(f.severity))[:50]:
             where = f"`{f.location}`".replace("|", "\\|") if f.file else ""
             lines.append(f"| {f.severity.label} | {f.title.replace('|', chr(92) + '|')} | {where} |")
-        if len(result.findings) > 50:
-            lines += ["", f"Showing the 50 most serious of {len(result.findings)}."]
+        if len(fresh) > 50:
+            lines += ["", f"Showing the 50 most serious of {len(fresh)}."]
     if result.changes:
         lines += ["", f"Since the last scan: {result.changes['fixed_count']} fixed, {len(result.changes['new'])} new."]
     return "\n".join(lines) + "\n"

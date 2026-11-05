@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import advisories, inventory, probe, scoring
+from . import advisories, config, inventory, probe, scoring
 from .checks import REGISTRY, ScanContext, inline_ignored, run_all
 from .db import DB
 from .feeds import epss, kev, registry
@@ -272,7 +272,9 @@ def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bo
     step(SCAN_STEPS[5])
     findings = _dedupe(findings)
     suppressions = db.active_suppressions(project_id)
-    hidden = {id(f) for f in findings if f.fingerprint in suppressions or inline_ignored(ctx, f)}
+    project_config = config.load(index)
+    errors.extend(project_config.warnings)
+    hidden = {id(f) for f in findings if f.fingerprint in suppressions or inline_ignored(ctx, f) or project_config.hides(f.check_id, f.file)}
     suppressed = [f for f in findings if id(f) in hidden]
     findings = [f for f in findings if id(f) not in hidden]
     findings.sort(key=lambda f: (-f.severity, f.category, f.file or "", f.line or 0))

@@ -1091,7 +1091,7 @@ function drawFindings(container, projectId, data, summary) {
   container.append(h("div", { class: "row spread" }, h("p", { class: "faint" }, info.join(" · ")), reportButton(projectId)));
   if (summary.suppressed) {
     container.append(h("p", { class: "faint", style: "color:var(--medium)" },
-      `${plural(summary.suppressed, "finding")} hidden by 'accept risk' or ladpock-ignore comments. Check any you didn't add yourself.`));
+      `${plural(summary.suppressed, "finding")} hidden by 'accept risk', ladpock-ignore comments or ladpock.toml. Check any you didn't add yourself.`));
   }
   if ((summary.errors || []).length) {
     container.append(h("details", { class: "faint" }, h("summary", null, plural(summary.errors.length, "warning")),
@@ -1145,7 +1145,7 @@ function reportButton(projectId) {
     link.click();
     link.remove();
     setTimeout(() => URL.revokeObjectURL(url), 10000);
-    toast(`Saved ${res.filename} to your downloads`);
+    toast(`Report ready: ${res.filename}. Keep it private, as it includes code snippets.`);
   } }, "Download report");
 }
 
@@ -1443,7 +1443,8 @@ function drawHuman(container, id, items) {
         catch (e) { box.checked = !box.checked; toast(e.message); }
       });
       return h("label", { class: "check-item", for: box.id }, box,
-        h("span", null, item.text, item.checked_at ? h("span", { class: "faint" }, `  ·  confirmed ${ago(item.checked_at)}`) : null));
+        h("span", null, item.text, item.checked_at ? h("span", { class: "faint" }, `  ·  confirmed ${ago(item.checked_at)}`) : null,
+          item.evidence ? h("div", { class: "faint small-print" }, item.evidence) : null));
     })));
 }
 

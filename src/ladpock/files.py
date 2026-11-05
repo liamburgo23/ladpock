@@ -49,6 +49,8 @@ AI_INSTRUCTION_NAMES = {
 TEST_DIRS = {"test", "tests", "__tests__", "spec", "specs", "e2e", "cypress", "playwright", "__mocks__", "fixtures"}
 _TEST_FILE = re.compile(r"(\.(test|spec|stories)\.[a-z]+$)|(^test_.*\.py$)|(_test\.(py|go)$)")
 
+# Not text LadPock would normally read, but worth knowing about if they're there at all.
+SENSITIVE_FILE = re.compile(r"(?i)^(?:id_(?:rsa|dsa|ecdsa|ed25519)|.+\.(?:pem|key|p12|pfx|jks|keystore|ppk|kdbx|ovpn)|\.pypirc|\.netrc|_netrc|\.git-credentials)$")
 MAX_BYTES = 1_000_000
 MAX_SOURCE_BYTES = 400_000  # for analysis that reads structure: bigger than this isn't hand-written
 MAX_LINE_AVERAGE = 1000  # and this is minified
@@ -110,6 +112,7 @@ class FileIndex:
     def __init__(self, root: str | Path, max_files: int = 50_000):
         self.root = Path(root).resolve()
         self.paths: list[str] = []
+        self.sensitive: list[str] = []
         self.skipped_large = 0
         self.truncated = False
         self._cache: dict[str, str | None] = {}
@@ -124,7 +127,11 @@ class FileIndex:
             )
             for name in sorted(filenames):
                 full = os.path.join(dirpath, name)
-                if os.path.islink(full) or not is_texty(name):
+                if os.path.islink(full):
+                    continue
+                if SENSITIVE_FILE.match(name):
+                    self.sensitive.append(Path(full).relative_to(self.root).as_posix())
+                if not is_texty(name):
                     continue
                 try:
                     size = os.path.getsize(full)

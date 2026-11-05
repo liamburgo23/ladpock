@@ -27,7 +27,7 @@ CRITICAL (6)
 
 ## What it does
 
-- **191 built-in checks** across secrets, sign-in, authorization, API abuse and cost, injection, payments,
+- **192 built-in checks** across secrets, sign-in, authorization, API abuse and cost, injection, payments,
   crypto, config, supply chain, and AI-generated code smells. Run `ladpock checks` for the list, or see
   [docs/CHECKS.md](docs/CHECKS.md).
 - **A route matrix** for Next.js (App Router, Pages API and server actions), SvelteKit, Remix, Nuxt, Astro, Express,
@@ -257,6 +257,7 @@ you've scanned before.
 | `ladpock scan [path]` | Scan a project (`--profile quick\|standard\|full`, `--format text\|json\|sarif\|html`, `-o file`, `--live URL`) |
 | `ladpock` / `ladpock status` | Refresh feeds, show new advisories and your projects' grades |
 | `ladpock routes [path]` | Show the route matrix |
+| `ladpock sbom [path]` | List every package version as a CycloneDX bill of materials |
 | `ladpock fix-prompt [path]` | Print a prompt for your AI assistant from the last scan |
 | `ladpock advisories [path]` | List known vulnerable dependencies |
 | `ladpock projects discover <folder>` | Register every project inside a folder |
@@ -354,7 +355,7 @@ won't replace an existing hook unless you pass `--force`; `ladpock hook remove` 
 ### In CI
 
 ```yaml
-- uses: liamburgo23/ladpock@v0.14.0
+- uses: liamburgo23/ladpock@v0.15.0
   with:
     fail-on: high   # critical, high, medium or low; leave empty to never fail
 ```
@@ -368,6 +369,46 @@ commit SHA rather than a tag if you want to be sure what runs. Elsewhere:
 pipx install git+https://github.com/liamburgo23/ladpock
 ladpock scan . --format sarif -o ladpock.sarif --fail-on high
 ```
+
+Starting on a project that already has problems? Record them, and only new ones will fail the job:
+
+```bash
+ladpock scan . --write-baseline .ladpock-baseline.json
+```
+
+```yaml
+- uses: liamburgo23/ladpock@v0.15.0
+  with:
+    baseline: .ladpock-baseline.json
+```
+
+Findings in the baseline still count towards the grade, and the summary says how many are left. The file matches findings by their
+content, so it stays valid as code moves around.
+
+### Project settings
+
+Add a `ladpock.toml` to your project's root folder to teach LadPock what only you know:
+
+```toml
+[routes]
+auth_functions = ["requireTeamMember"]   # your own helpers that check who's calling
+owner_functions = ["assertOwnsOrder"]    # and that check a record is theirs
+public = ["/api/products", "/api/products/*"]
+
+[ignore]
+paths = ["legacy/*"]
+checks = ["LP-ABUSE-013"]
+```
+
+Anything this hides is still counted in every report, so a config file can't quietly make a scan pass.
+
+### A bill of materials
+
+```bash
+ladpock sbom . -o sbom.json
+```
+
+This lists every package version the project uses as CycloneDX JSON, read from your lockfiles. Nothing is sent anywhere.
 
 ### A report to keep or pass on
 

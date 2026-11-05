@@ -3,6 +3,22 @@
 All notable changes to LadPock. Versions follow [semantic versioning](https://semver.org/); while LadPock is below
 1.0, minor versions can include changes to checks and grades.
 
+## [0.15.0] - 2026-11-05
+
+### Added
+- A baseline, so a project with old problems can start by failing only on new ones: `ladpock scan --write-baseline FILE`, then `--baseline FILE`
+  or the action's `baseline` input. Baselined findings still count towards the grade.
+- `ladpock.toml` in a project's root: your own login and ownership helpers, routes that are public on purpose, and paths or checks to skip. Whatever
+  it hides is still counted in reports.
+- `ladpock sbom`: every package version as a CycloneDX bill of materials, read from lockfiles.
+- A check for private keys and credentials files in the repository: SSH and TLS private keys, Firebase and Google service account keys, key stores,
+  `.git-credentials`, `.npmrc`, `.pypirc` and `.netrc`. These were invisible before, because they aren't files LadPock normally reads.
+- The "Needs a human" item about one user reading another's data now shows what the two-account check found.
+- A live check for a GraphQL schema open to anyone.
+
+### Changed
+- URLs that hold a secret, such as `/invite/{token}`, no longer count as having no login.
+
 ## [0.14.0] - 2026-11-05
 
 ### Added
@@ -194,6 +210,7 @@ All notable changes to LadPock. Versions follow [semantic versioning](https://se
   EPSS with "new since you last looked"; hallucinated-package detection; grades; fix prompts; JSON and SARIF
   output; and support for Gitleaks, OSV-Scanner and Opengrep.
 
+[0.15.0]: https://github.com/liamburgo23/ladpock/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/liamburgo23/ladpock/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/liamburgo23/ladpock/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/liamburgo23/ladpock/compare/v0.11.0...v0.12.0

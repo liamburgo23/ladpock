@@ -137,7 +137,7 @@ def _checked(*, coverage: dict, checks_run, dependencies, scanners: list[dict], 
     else:
         items.append("The running app wasn't tested, only its code")
     if suppressed:
-        items.append(f"{_plural(int(suppressed), 'finding')} hidden by accept-risk decisions or ladpock-ignore comments")
+        items.append(f"{_plural(int(suppressed), 'finding')} hidden by accept-risk decisions, ladpock-ignore comments or ladpock.toml")
     return "<h2>What was checked</h2><ul>" + "".join(f"<li>{_e(i)}</li>" for i in items) + "</ul>"
 
 

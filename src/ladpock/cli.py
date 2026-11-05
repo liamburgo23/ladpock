@@ -59,26 +59,63 @@ def cmd_scan(args, db: DB) -> int:
         _emit(report.to_html(result), args.output)
     else:
         _emit(report.render_scan(result, _style(args) if not args.output else report.Style(False), args.human), args.output)
+    known = _read_baseline(args.baseline) if args.baseline else frozenset()
+    if args.write_baseline:
+        _write_baseline(args.write_baseline, result)
+    if known or args.baseline:
+        fresh = sum(1 for f in result.findings if f.fingerprint not in known)
+        current = {f.fingerprint for f in result.findings}
+        print(f"Baseline: {fresh} new, {len(result.findings) - fresh} already known, {len(known - current)} from the baseline now fixed.", file=sys.stderr)
     if args.github:
-        _github_outputs(result)
+        _github_outputs(result, known)
     if args.fail_on:
         threshold = Severity.parse(args.fail_on)
-        if any(f.severity >= threshold for f in result.findings):
+        if any(f.severity >= threshold and f.fingerprint not in known for f in result.findings):
             return 1
     return 0
 
 
-def _github_outputs(result) -> None:
+def _read_baseline(path: str) -> frozenset[str]:
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+        return frozenset(data["findings"])
+    except FileNotFoundError:
+        print(f"warning: no baseline at {path}, so every finding counts as new", file=sys.stderr)
+    except (ValueError, KeyError, TypeError, OSError) as exc:
+        print(f"warning: couldn't read the baseline at {path} ({exc}), so every finding counts as new", file=sys.stderr)
+    return frozenset()
+
+
+def _write_baseline(path: str, result) -> None:
+    """Refs ignore line numbers, so the file stays valid as code moves around. Titles are only there for whoever reads the diff."""
+    findings = {f.fingerprint: f"{f.severity.label}: {f.title}" + (f" ({f.file})" if f.file else "") for f in result.findings}
+    Path(path).write_text(json.dumps({"tool": f"ladpock {__version__}", "findings": dict(sorted(findings.items()))}, indent=2) + "\n", encoding="utf-8")
+    print(f"Wrote {len(findings)} finding(s) to {path}. Only new ones will fail a scan run with --baseline {path}.", file=sys.stderr)
+
+
+def cmd_sbom(args, db: DB) -> int:
+    from . import sbom
+
+    document, warnings = sbom.build(args.path)
+    for warning in warnings:
+        print(f"warning: {warning}", file=sys.stderr)
+    _emit(json.dumps(document, indent=2), args.output)
+    print(f"{len(document['components'])} packages listed. Lockfiles give the exact versions, so commit yours.", file=sys.stderr)
+    return 0
+
+
+def _github_outputs(result, known: frozenset[str] = frozenset()) -> None:
     """For GitHub Actions: marks on the changed lines, a job summary, and the grade as step outputs."""
-    for line in report.github_annotations(result):
+    for line in report.github_annotations(result, known):
         print(line, file=sys.stderr)
     summary, outputs = os.environ.get("GITHUB_STEP_SUMMARY"), os.environ.get("GITHUB_OUTPUT")
     if summary:
         with open(summary, "a", encoding="utf-8") as handle:
-            handle.write(report.github_summary(result))
+            handle.write(report.github_summary(result, known))
     if outputs:
         with open(outputs, "a", encoding="utf-8") as handle:
-            handle.write(f"grade={result.scorecard.grade}\nscore={result.scorecard.overall}\nfindings={len(result.findings)}\n")
+            fresh = sum(1 for f in result.findings if f.fingerprint not in known)
+            handle.write(f"grade={result.scorecard.grade}\nscore={result.scorecard.overall}\nfindings={len(result.findings)}\nnew={fresh}\n")
 
 
 def cmd_full_check(args, db: DB) -> int:
@@ -364,6 +401,10 @@ def build_parser() -> argparse.ArgumentParser:
                       help="how much to check (see the profiles above; default standard)")
     scan.add_argument("--format", choices=["text", "json", "sarif", "html"], default="text",
                       help="html is a one-page report you can keep or pass on")
+    scan.add_argument("--baseline", metavar="FILE",
+                      help="findings listed in this file don't count for --fail-on or GitHub marks, so a project with old problems can "
+                           "start by failing only on new ones. They still count towards the grade")
+    scan.add_argument("--write-baseline", metavar="FILE", help="record today's findings, for use with --baseline")
     scan.add_argument("--github", action="store_true",
                       help="in GitHub Actions, also mark findings on the changed lines and write a job summary and step outputs")
     scan.add_argument("--output", "-o", help="write the report to a file")
@@ -390,7 +431,11 @@ def build_parser() -> argparse.ArgumentParser:
     full.add_argument("--all-projects", action="store_true", help="check every project LadPock knows about")
     full.add_argument("--no-ai", action="store_true", help="skip the local AI review")
 
-    routes = sub.add_parser("routes", help="show the route matrix (Next.js) and command matrix (Tauri)")
+    sbom_parser = sub.add_parser("sbom", help="list every package version this project uses, as a CycloneDX bill of materials")
+    sbom_parser.add_argument("path", nargs="?", default=".")
+    sbom_parser.add_argument("--output", "-o", help="write it to a file")
+
+    routes = sub.add_parser("routes", help="show the route matrix and the command matrix (Tauri)")
     routes.add_argument("path", nargs="?", default=".")
     routes.add_argument("--format", choices=["text", "json"], default="text")
 
@@ -445,7 +490,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 COMMANDS = {
-    None: cmd_status, "status": cmd_status, "scan": cmd_scan, "full-check": cmd_full_check, "routes": cmd_routes,
+    None: cmd_status, "status": cmd_status, "scan": cmd_scan, "full-check": cmd_full_check, "routes": cmd_routes, "sbom": cmd_sbom,
     "fix-prompt": cmd_fix_prompt,
     "advisories": cmd_advisories, "suppress": cmd_suppress, "projects": cmd_projects, "checks": cmd_checks,
     "doctor": cmd_doctor, "ui": cmd_ui, "scanners": cmd_scanners, "ai": lambda args, db: _ai_run(args, db),

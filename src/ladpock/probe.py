@@ -215,7 +215,9 @@ LISTING_PATHS = ("/uploads/", "/upload/", "/files/", "/backup/", "/backups/", "/
 LISTING = re.compile(r"(?i)<title>\s*(?:Index of|Directory listing for)\s*/|<h1>\s*(?:Index of|Directory listing for)\s*/")
 DOCS_PATHS = (("/openapi.json", re.compile(r"\"openapi\"\s*:|\"swagger\"\s*:")), ("/swagger.json", re.compile(r"\"openapi\"\s*:|\"swagger\"\s*:")),
               ("/v3/api-docs", re.compile(r"\"openapi\"\s*:")), ("/api-docs", re.compile(r"(?i)\"openapi\"\s*:|\"swagger\"\s*:|swagger-ui")),
-              ("/swagger-ui.html", re.compile(r"(?i)swagger-ui")), ("/docs", re.compile(r"(?i)swagger-ui|redoc")))
+              ("/swagger-ui.html", re.compile(r"(?i)swagger-ui")), ("/docs", re.compile(r"(?i)swagger-ui|redoc")),
+              ("/graphql?query=%7B__schema%7BqueryType%7Bname%7D%7D%7D", re.compile(r"\"__schema\"\s*:\s*\{")),
+              ("/api/graphql?query=%7B__schema%7BqueryType%7Bname%7D%7D%7D", re.compile(r"\"__schema\"\s*:\s*\{")))
 SESSION_COOKIE = re.compile(r"(?i)sess|\bsid\b|connect\.sid|token|auth|jwt|\blogin\b|remember")
 NOT_SESSION_COOKIE = re.compile(r"(?i)csrf|xsrf|callback|^sb-|consent|theme|locale|lang")  # Supabase's browser client reads its own cookie by design
 REFLECT_MARK = 'ladpock7x"<b>'
@@ -931,7 +933,7 @@ def _sensitive_files(client: Client, result: ProbeResult, base: str) -> None:
         if resp and resp.status == 200 and LISTING.search(resp.body):
             result.findings.append(_finding(DIRECTORY_LISTING, None, base + path, snippet=f"GET {path} -> a list of the folder's files"))
     for path, signature in DOCS_PATHS:
-        resp = client.send("GET", path)
+        resp = client.send("GET", path, ACCEPT_ANY)
         if resp and resp.status == 200 and signature.search(resp.body):
             result.findings.append(_finding(API_DOCS, None, base + path, confidence="low", snippet=f"GET {path} -> 200"))
             break

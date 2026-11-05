@@ -27,6 +27,60 @@ MCP_CONFIG_NAMES = {".mcp.json", "mcp.json", "claude_desktop_config.json"}
 MCP_LITERAL = re.compile(r'"(\w*(?:KEY|TOKEN|SECRET|PASSWORD)\w*)"\s*:\s*"([^"$%{][^"]{7,})"', re.I)
 
 
+SERVICE_ACCOUNT = re.compile(r'''"type"\s*:\s*"service_account"''')
+PRIVATE_KEY_BLOCK = re.compile(r"-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----")
+ENCRYPTED_KEY = re.compile(r"-----BEGIN (?:ENCRYPTED) PRIVATE KEY-----|Proc-Type:\s*4,ENCRYPTED")
+TOKEN_RULES = {
+    ".npmrc": re.compile(r"(?m)_(?:authToken|password|auth)\s*=\s*(?!\$\{)\S+"),
+    ".pypirc": re.compile(r"(?m)^\s*password\s*[=:]\s*\S+"),
+    ".netrc": re.compile(r"\bpassword\s+\S+"),
+    "_netrc": re.compile(r"\bpassword\s+\S+"),
+    ".git-credentials": re.compile(r"://[^:/\s]+:[^@\s]+@"),
+}
+BINARY_KEY_STORE = re.compile(r"(?i)\.(?:p12|pfx|jks|keystore|ppk|kdbx|ovpn)$")
+EXAMPLE_NAME = re.compile(r"(?i)(?:^|[./_-])(?:example|sample|test|dummy|fake|debug|localhost|snakeoil)(?:[./_-]|$)")
+
+
+@check(
+    "LP-SEC-010", "Private key or credentials file in the repository", "secrets", Severity.CRITICAL,
+    why="This file gives direct access to whatever it's for: a server, a cloud account, a signing identity or a package registry. "
+        "Anyone who can read the repository, or its history, can use it. A Firebase or Google service account key has full admin "
+        "access and bypasses all your security rules.",
+    fix="Remove it, add it to .gitignore, and revoke it now, because deleting a file doesn't remove it from git history. Create a "
+        "new one and keep it in your hosting provider's secret settings or a secret manager.",
+    cwe=("CWE-312", "CWE-522", "CWE-798"),
+)
+def credential_files(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
+    def committed(rel: str) -> bool:
+        return ctx.git_files is None or rel in ctx.git_files  # with no git, assume it might be
+
+    for rel in ctx.index.sensitive:
+        name = basename(rel)
+        if is_test_path(rel) or not committed(rel):
+            continue
+        if BINARY_KEY_STORE.search(name):
+            if not EXAMPLE_NAME.search(name):
+                yield ctx.finding(info, rel, None, name, severity=Severity.HIGH, confidence="medium",
+                                  message="This looks like a key store or credentials file. Check it isn't real and doesn't need a "
+                                          "password that's also in this repository. " + info.why)
+        elif name.lower() in TOKEN_RULES:
+            if TOKEN_RULES[name.lower()].search(ctx.index.read(rel) or ""):
+                yield ctx.finding(info, rel, None, name, confidence="high")
+        else:
+            text = ctx.index.read(rel) or ""
+            if PRIVATE_KEY_BLOCK.search(text) and not EXAMPLE_NAME.search(name):
+                encrypted = bool(ENCRYPTED_KEY.search(text))
+                yield ctx.finding(info, rel, None, name, severity=Severity.HIGH if encrypted else Severity.CRITICAL,
+                                  confidence="high" if not encrypted else "medium")
+    for rel in ctx.index.iter({".json"}):
+        if not committed(rel) or EXAMPLE_NAME.search(basename(rel)):
+            continue
+        text = ctx.index.read(rel) or ""
+        if "private_key" in text and SERVICE_ACCOUNT.search(text) and PRIVATE_KEY_BLOCK.search(text):
+            yield ctx.finding(info, rel, None, basename(rel), confidence="high",
+                              message="This is a Google Cloud or Firebase service account key. " + info.why)
+
+
 def is_client_file(ctx: ScanContext, rel: str) -> bool:
     """Best guess at whether this file ends up in the browser bundle."""
     if not rel.endswith(tuple(JS_EXT)):
