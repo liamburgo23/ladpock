@@ -18,7 +18,16 @@ All notable changes to LadPock. Versions follow [semantic versioning](https://se
   old TLS versions).
 - More token checks: .NET's `ValidateLifetime = false` and similar, Go and Java `ParseUnverified`, Laravel's `'secure' => false`.
 
+- The AI reviews now read Supabase policies and Firebase rules, and hosting and web server settings. They're told when a backend
+  function can be called straight from the browser, and they don't spend tokens re-checking what the running app has confirmed.
+
+### Changed
+- Public read on a Supabase table now depends on its name: fine for `posts`, high severity for `profiles` or `orders`.
+- The URL that carries tRPC or GraphQL no longer appears as an endpoint of its own, because each procedure and resolver is listed.
+
 ### Fixed
+- SHA-256 of a random reset token was reported as weak password hashing.
+- tRPC's `.query(` was counted as a database query.
 - A very large or deliberately crafted file could stall a scan for minutes or indefinitely. Structural analysis now skips files
   over 400 KB and minified files, and has limits per file. Line-by-line checks still read them.
 

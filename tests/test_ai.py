@@ -16,7 +16,7 @@ from ladpock.ai import system
 from ladpock.ai.client import LocalModelError, ModelInfo, OllamaClient, pick_model
 from ladpock.ai.grounding import ground
 from ladpock.ai.review import run_review
-from ladpock.ai.units import build_units
+from ladpock.ai.units import build_units, verdict_units
 from ladpock.db import DB
 from ladpock.files import FileIndex
 from ladpock.scan import run_scan
@@ -263,6 +263,41 @@ class DashboardAi(unittest.TestCase):
             fake.shutdown()
             fake.server_close()
             home.cleanup()
+
+
+class ReviewUnits(unittest.TestCase):
+    def test_access_rules_are_read(self):
+        with materialize("vuln-functions") as tmp:
+            units = build_units(FileIndex(Path(tmp) / "vuln-functions"), [])
+        policy = {u.file for u in units if u.kind == "policy"}
+        self.assertIn("firestore.rules", policy)
+        self.assertIn("supabase/migrations/001_policies.sql", policy)
+        infra = {u.file for u in units if u.kind == "infra"}
+        self.assertTrue({"serverless.yml", "template.yaml", "deploy/nginx.conf"} <= infra)
+
+    def test_direct_client_functions_say_so(self):
+        with materialize("vuln-functions") as tmp:
+            units = build_units(FileIndex(Path(tmp) / "vuln-functions"), [])
+        by_title = {u.title: u for u in units}
+        self.assertIn("front end", by_title["POST convex/messages:remove"].facts)
+        self.assertNotIn("front end", by_title["POST /orders"].facts)
+
+    def test_function_backends_are_reviewed_with_their_code(self):
+        with materialize("vuln-functions") as tmp:
+            units = build_units(FileIndex(Path(tmp) / "vuln-functions"), [])
+        unit = next(u for u in units if u.title == "POST convex/messages:remove")
+        self.assertEqual(unit.file, "convex/messages.ts")
+        self.assertIn("ctx.db.delete", unit.code)
+
+    def test_what_the_running_app_confirmed_isnt_second_guessed(self):
+        with materialize("vuln-next-supabase") as tmp:
+            index = FileIndex(Path(tmp) / "vuln-next-supabase")
+            rel = next(iter(index.iter({".ts"})))
+            base = {"severity": "high", "category": "authz", "file": rel, "line": 1, "title": "t", "message": "m"}
+            findings = [{**base, "ref": "plain"}, {**base, "ref": "live", "source": "live"},
+                        {**base, "ref": "confirmed", "extra": {"live": "confirmed"}}, {**base, "ref": "refused", "extra": {"live": "refused"}}]
+            refs = {u.finding_ref for u in verdict_units(index, findings)}
+        self.assertEqual(refs, {"plain", "refused"})  # a refusal is still worth a second opinion
 
 
 if __name__ == "__main__":

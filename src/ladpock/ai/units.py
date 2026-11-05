@@ -1,7 +1,7 @@
 """Splits a project into review units, most valuable first.
 
-1. Next.js routes and Tauri commands, with what the static analysis found
-2. Scanner findings worth a second opinion
+1. Routes, backend functions and Tauri commands, with what the static analysis found
+2. Scanner findings worth a second opinion, plus database and storage access rules
 3. The rest of the source, in chunks
 
 Every line goes through secret redaction before a model sees it, and units
@@ -27,9 +27,16 @@ SKIP_FILE = re.compile(
     r"\.(?:d\.ts|min\.js|generated\.\w+)$|(?:^|/)(?:migrations?|__generated__|gen|scripts|tools|bench(?:marks?)?|examples?|docs)/"
 )
 INFRA_FILE = re.compile(
-    r"(?:^|/)(?:Dockerfile[^/]*|Containerfile|[^/]*\.dockerfile|docker-compose[^/]*\.ya?ml|compose\.ya?ml|[^/]+\.tf)$|"
+    r"(?:^|/)(?:Dockerfile[^/]*|Containerfile|[^/]*\.dockerfile|docker-compose[^/]*\.ya?ml|compose\.ya?ml|[^/]+\.tf|serverless\.ya?ml|template\.ya?ml|"
+    r"vercel\.json|netlify\.toml|wrangler\.toml|firebase\.json|nginx[^/]*\.conf|default\.conf)$|"
     r"^\.github/workflows/[^/]+\.ya?ml$"
 )
+# Who may read and write what: Supabase policies and Firebase rules. Often the app's only access control.
+POLICY_FILE = re.compile(r"(?:^|/)(?:firestore|storage)\.rules$|(?:^|/)database\.rules\.json$|(?:^|/)supabase/(?:migrations/[^/]+|schema|policies[^/]*)\.sql$|"
+                         r"(?:^|/)supabase/migrations/[^/]+\.sql$")
+POLICY_TEXT = re.compile(r"(?i)\bcreate\s+policy\b|\bsecurity\s+definer\b|\benable\s+row\s+level\s+security\b|\bcreate\s+(?:or\s+replace\s+)?view\b|\ballow\s+\w|\.read|\.write")
+# Reached straight from the browser with details that ship in the front end, so nothing on the page protects them.
+DIRECT_CLIENT = {"convex", "firebase-fn", "trpc", "graphql", "supabase-edge"}
 K8S = re.compile(r"(?m)^apiVersion:\s*\S+[\s\S]*^kind:\s*\w+")
 HOT_PATH = re.compile(r"(?i)api|route|server|auth|session|login|admin|payment|webhook|action|command|handler|db|sql|upload|file")
 
@@ -89,7 +96,9 @@ def route_units(index: FileIndex) -> list[Unit]:
             segments.append(_take(index, rel, r.line, end, lines))
             facts = (f"{r.method} {r.path} ({r.kind}). Auth: {r.auth}. Ownership check: {r.owner}. Validation: "
                      f"{r.validation}. Rate limit: {r.rate_limit}. Calls paid API: {r.paid_api}. Writes data: {r.mutates}. "
-                     f"Gaps noticed: {', '.join(gaps(r)) or 'none'}.")
+                     f"Gaps noticed: {', '.join(gaps(r)) or 'none'}."
+                     + (" Anyone can call this directly using details that ship in the front end, so checks on the page don't "
+                        "protect it." if r.kind in DIRECT_CLIENT else ""))
             units.append(Unit(f"route:{rel}:{r.method}:{r.path}", "route", rel, f"{r.method} {r.path}", facts,
                               lines, segments, 0))
     return units
@@ -121,6 +130,8 @@ def verdict_units(index: FileIndex, findings: list[dict]) -> list[Unit]:
             continue
         if f.get("category") == "secrets" or not index.exists(f["file"]):
             continue  # a leaked key is real regardless of context
+        if f.get("source") == "live" or (f.get("extra") or {}).get("live") == "confirmed":
+            continue  # seen on the running app, so there's nothing for a model to weigh in on
         lines: dict[int, str] = {}
         segments = [_take(index, f["file"], f["line"] - 20, f["line"] + 20, lines)]
         units.append(Unit(f"verdict:{f['ref']}", "verdict", f["file"], f["title"], "", lines, segments, 1,
@@ -165,10 +176,26 @@ def infra_units(index: FileIndex) -> list[Unit]:
     return units
 
 
+def policy_units(index: FileIndex) -> list[Unit]:
+    """Supabase policies and Firebase rules, in chunks. These decide who can reach the data, so they rank near the top."""
+    units = []
+    for rel in index.iter(None, pred=lambda r: bool(POLICY_FILE.search(r))):
+        text = index.read(rel) or ""
+        lines = index.lines(rel)
+        if not lines or not POLICY_TEXT.search(text):
+            continue
+        for start in range(1, len(lines) + 1, CHUNK_LINES):
+            chunk: dict[int, str] = {}
+            seg = _take(index, rel, start, start + CHUNK_LINES - 1, chunk)
+            if POLICY_TEXT.search("\n".join(chunk.values())):
+                units.append(Unit(f"policy:{rel}:{start}", "policy", rel, f"{rel} lines {seg[0]}-{seg[1]}", "", chunk, [seg], 1))
+    return units
+
+
 def build_units(index: FileIndex, findings: list[dict]) -> list[Unit]:
     entry = route_units(index) + command_units(index)
     covered = {u.file for u in entry if u.kind == "route"}
-    units = entry + verdict_units(index, findings) + file_units(index, covered) + infra_units(index)
+    units = entry + verdict_units(index, findings) + policy_units(index) + file_units(index, covered) + infra_units(index)
     units.sort(key=lambda u: (u.priority, u.file, min(u.lines, default=0)))
     return units
 

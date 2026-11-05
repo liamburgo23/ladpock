@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from ..models import CATEGORIES
 
-PROMPT_VERSION = 2
+PROMPT_VERSION = 3
 
 SYSTEM = """You are a senior application security engineer reviewing code from a project its owner asked you to check.
 
@@ -61,8 +61,14 @@ FOCUS = {
                "them do beyond the app's intended features: read or write files outside expected folders, run "
                "programs, reach the network, or corrupt data.",
     "file": "This is part of a source file. Look for security problems in what's shown.",
-    "infra": "This is deployment or infrastructure configuration (a Dockerfile, Docker Compose, Kubernetes, Terraform "
-             "or a CI workflow). Report settings that expose services or data to the internet, put secrets in the "
+    "policy": "These are database or storage access rules (Supabase/Postgres policies or Firebase rules), often the app's only "
+              "access control, and anyone can reach this data with the public key in the front end. Report a rule that lets a user "
+              "reach rows that aren't theirs (only checking they're signed in counts: anyone can sign up), lets a user change "
+              "who owns a row or give themselves a role, a table with no row level security, a SECURITY DEFINER function "
+              "that doesn't check its caller or has no fixed search_path, or a view that bypasses these rules. Rows meant to be "
+              "public are fine.",
+    "infra": "This is deployment or infrastructure configuration (a Dockerfile, Docker Compose, Kubernetes, Terraform, "
+             "serverless or hosting settings, a web server, or a CI workflow). Report settings that expose services or data to the internet, put secrets in the "
              "file or the image, give containers, roles or tokens more privilege than they need, run untrusted input "
              "in scripts, or switch off security features. Ignore style, cost and performance.",
 }
