@@ -60,7 +60,7 @@ EXPECTED_FUNCTIONS = {
     "LP-ABUSE-013", "LP-API-003", "LP-API-004", "LP-SUPA-005", "LP-SUPA-006", "LP-SUPA-007", "LP-SUPA-008", "LP-SUPA-009",
 }
 # Produced only with network access or git, covered by their own tests.
-NOT_IN_OFFLINE_FIXTURE = {"LP-SEC-004", "LP-DEP-001", "LP-SUP-005"} | {f"LP-LIVE-00{i}" for i in range(1, 10)}  # live: test_probe
+NOT_IN_OFFLINE_FIXTURE = {"LP-SEC-004", "LP-DEP-001", "LP-SUP-005"} | {f"LP-LIVE-{i:03d}" for i in range(1, 17)}  # live: test_probe
 
 
 def _context(root: Path) -> ScanContext:

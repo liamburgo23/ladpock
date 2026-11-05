@@ -11,7 +11,11 @@ change data:
 - the home page's security headers, CORS answer and server banner
 - well-known files that should never be served (.env, .git, actuator, phpinfo)
 - a short burst of failed sign-ins, to see whether anything slows it down
-- every response is checked for stack traces
+- every response is checked for stack traces, and session cookies for HttpOnly
+  and SameSite
+- harmless probes: a marker in the query string to see if it comes back as raw
+  HTML, a stray quote to see if it causes a database syntax error, and a made-up
+  address in redirect parameters (redirects are never followed)
 - with two test accounts: can one account open the other's records? Only GET
   requests are used for this, whatever include_writes says, and the login
   values are held in memory, sent only to localhost and never stored or logged
@@ -28,6 +32,7 @@ import socket
 import time
 import urllib.error
 import urllib.request
+from urllib.parse import urlencode
 from dataclasses import dataclass, field
 from typing import Callable
 from urllib.parse import urlsplit
@@ -38,6 +43,8 @@ from .routes import AUTH_FLOW, Route
 
 MAX_REQUESTS = 250
 MAX_ACCOUNT_REQUESTS = 400  # the two-account check has its own allowance, so a big app can't use it all up first
+MAX_PROBE_REQUESTS = 150  # and so do the sign-in burst and the harmless probes
+MAX_PROBED_ROUTES = 25
 MAX_BODY = 200_000
 TIMEOUT = 6
 LOGIN_BURST = 20
@@ -114,21 +121,113 @@ ADMIN_REACHABLE = describe(
     cwe=("CWE-285", "CWE-269"),
 )
 
+COOKIE_FLAGS = describe(
+    "LP-LIVE-010", "Session cookie missing protections", "auth", Severity.MEDIUM,
+    why="This cookie looks like a login session but isn't protected. Without HttpOnly any script on the page can steal it, so "
+        "one XSS bug becomes an account takeover, and without SameSite other sites can send requests using it.",
+    fix="Set the session cookie with HttpOnly, Secure and SameSite=Lax (or Strict).",
+    cwe=("CWE-1004", "CWE-1275", "CWE-614"),
+)
+REFLECTED = describe(
+    "LP-LIVE-011", "Page puts request input back as raw HTML", "injection", Severity.HIGH,
+    why="LadPock put a small piece of HTML in the address and the page sent it back unescaped. A link with a script in that "
+        "spot runs as your site for anyone who opens it (reflected XSS), and can act as them.",
+    fix="Escape everything that comes from the request before it goes into a page. Template engines do this by default, so "
+        "look for where it's turned off (|safe, raw, dangerouslySetInnerHTML) or where the page is built by joining strings.",
+    cwe=("CWE-79",),
+)
+SQL_ERROR_FOUND = describe(
+    "LP-LIVE-012", "A stray quote breaks a database query", "injection", Severity.CRITICAL,
+    why="LadPock put a single quote in this request and the database reported a syntax error, while an ordinary value worked. "
+        "That means the input is being written into the SQL itself, so an attacker can change the query (SQL injection) and "
+        "read or destroy your data.",
+    fix="Use parameterised queries or your ORM's normal query functions, so input is always sent separately from the SQL. "
+        "Don't build queries by joining strings. Show a generic error rather than the database's message.",
+    cwe=("CWE-89", "CWE-209"),
+)
+OPEN_REDIRECT = describe(
+    "LP-LIVE-013", "App redirects to any website", "injection", Severity.MEDIUM,
+    why="LadPock put a made-up address in a redirect parameter and the app sent the browser there. Attackers use links like "
+        "this to send people from your real domain to a fake sign-in page, and sometimes to steal login tokens.",
+    fix="Only redirect to paths on your own site: check the value starts with a single / and isn't followed by another / or "
+        "a backslash, or compare it against a list of allowed addresses.",
+    cwe=("CWE-601",),
+)
+CACHEABLE = describe(
+    "LP-LIVE-014", "Private answer marked as cacheable", "config", Severity.MEDIUM,
+    why="This answer needs a login but tells caches they may store and reuse it. A CDN or shared proxy can then serve one "
+        "user's data to another.",
+    fix="Send Cache-Control: private, no-store on anything that depends on who is logged in.",
+    cwe=("CWE-524",),
+)
+DIRECTORY_LISTING = describe(
+    "LP-LIVE-015", "Folder contents listed to anyone", "config", Severity.MEDIUM,
+    why="Opening this folder's address lists every file in it, so people can find uploads, backups and anything else that was "
+        "never meant to be linked.",
+    fix="Turn off directory listing in your web server or static file handler.",
+    cwe=("CWE-548",),
+)
+API_DOCS = describe(
+    "LP-LIVE-016", "API documentation open to anyone", "config", Severity.LOW,
+    why="The API's full description is public, which gives attackers a list of every endpoint and parameter to try.",
+    fix="If the API isn't meant to be public, turn the docs off in production or put them behind a login.",
+    cwe=("CWE-200",),
+)
+
+ENV_FILE = re.compile(r"(?m)^[A-Z][A-Z0-9_]*\s*=")
+DUMP = re.compile(r"(?i)CREATE TABLE|INSERT INTO")
+PRIVATE_KEY_FILE = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
 SENSITIVE_PATHS = [
-    ("/.env", re.compile(r"(?m)^[A-Z][A-Z0-9_]*\s*=")),
-    ("/.env.local", re.compile(r"(?m)^[A-Z][A-Z0-9_]*\s*=")),
-    ("/.env.production", re.compile(r"(?m)^[A-Z][A-Z0-9_]*\s*=")),
+    ("/.env", ENV_FILE),
+    ("/.env.local", ENV_FILE),
+    ("/.env.production", ENV_FILE),
+    ("/.env.development", ENV_FILE),
+    ("/.env.bak", ENV_FILE),
+    ("/.env.backup", ENV_FILE),
     ("/.git/HEAD", re.compile(r"^ref:\s*refs/")),
     ("/.git/config", re.compile(r"\[core\]")),
+    ("/.aws/credentials", re.compile(r"aws_access_key_id")),
+    ("/.npmrc", re.compile(r"_authToken|_password")),
+    ("/.docker/config.json", re.compile(r"\"auths\"")),
+    ("/.vscode/sftp.json", re.compile(r"\"(?:password|privateKeyPath)\"")),
+    ("/.htpasswd", re.compile(r"^\w+:\$")),
+    ("/id_rsa", PRIVATE_KEY_FILE),
+    ("/server.key", PRIVATE_KEY_FILE),
+    ("/docker-compose.yml", re.compile(r"(?m)^services:")),
     ("/actuator/env", re.compile(r"propertySources|activeProfiles")),
     ("/actuator/heapdump", None),
     ("/phpinfo.php", re.compile(r"PHP Version|phpinfo\(\)")),
+    ("/wp-config.php.bak", re.compile(r"DB_PASSWORD")),
+    ("/config.php.bak", re.compile(r"<\?php")),
     ("/server-status", re.compile(r"Apache Server Status")),
     ("/.DS_Store", re.compile(r"Bud1")),
-    ("/backup.sql", re.compile(r"(?i)CREATE TABLE|INSERT INTO")),
-    ("/dump.sql", re.compile(r"(?i)CREATE TABLE|INSERT INTO")),
+    ("/backup.sql", DUMP),
+    ("/dump.sql", DUMP),
+    ("/database.sql", DUMP),
     ("/db.sqlite3", re.compile(r"^SQLite format 3")),
+    ("/debug/pprof/", re.compile(r"Types of profiles available|goroutine")),
+    ("/rails/info/properties", re.compile(r"Rails version")),
+    ("/telescope", re.compile(r"Laravel Telescope|telescope")),
+    ("/_profiler", re.compile(r"Symfony Profiler")),
+    ("/elmah.axd", re.compile(r"Error Log for")),
 ]
+LISTING_PATHS = ("/uploads/", "/upload/", "/files/", "/backup/", "/backups/", "/static/", "/assets/", "/public/", "/storage/", "/logs/")
+LISTING = re.compile(r"(?i)<title>\s*(?:Index of|Directory listing for)\s*/|<h1>\s*(?:Index of|Directory listing for)\s*/")
+DOCS_PATHS = (("/openapi.json", re.compile(r"\"openapi\"\s*:|\"swagger\"\s*:")), ("/swagger.json", re.compile(r"\"openapi\"\s*:|\"swagger\"\s*:")),
+              ("/v3/api-docs", re.compile(r"\"openapi\"\s*:")), ("/api-docs", re.compile(r"(?i)\"openapi\"\s*:|\"swagger\"\s*:|swagger-ui")),
+              ("/swagger-ui.html", re.compile(r"(?i)swagger-ui")), ("/docs", re.compile(r"(?i)swagger-ui|redoc")))
+SESSION_COOKIE = re.compile(r"(?i)sess|\bsid\b|connect\.sid|token|auth|jwt|\blogin\b|remember")
+NOT_SESSION_COOKIE = re.compile(r"(?i)csrf|xsrf|callback|^sb-|consent|theme|locale|lang")  # Supabase's browser client reads its own cookie by design
+REFLECT_MARK = 'ladpock7x"<b>'
+REFLECT_PARAMS = ("q", "query", "search", "s", "name", "error", "message", "msg", "next", "ref")
+REDIRECT_PARAMS = ("next", "redirect", "redirect_to", "redirect_uri", "redirectUrl", "returnTo", "return_to", "returnUrl", "callbackUrl", "continue", "url",
+                   "dest", "destination", "goto", "r")
+REDIRECTY = re.compile(r"(?i)login|logout|sign-?in|sign-?out|callback|redirect|oauth|return|continue|/go\b|/out\b|/auth\b")
+GUESSED_PAGES = ("/", "/login", "/signin", "/logout", "/search", "/auth/callback", "/api/auth/callback")
+SQL_SYNTAX_ERROR = re.compile(
+    r"SQLSTATE\[42|syntax error at or near|You have an error in your SQL syntax|unterminated quoted string|Unclosed quotation mark|"
+    r"unrecognized token|near \"[^\"]*\": syntax error|quoted string not properly terminated|ORA-0(?:0933|1756)|PG::SyntaxError|"
+    r"Incorrect syntax near")
 STACK_MARKERS = re.compile(
     r"Traceback \(most recent call last\)|\bat [\w$.<>]+ \((?:file://)?/?[\w./\\:-]+\.(?:js|ts|mjs|cjs):\d+:\d+\)|"
     r"Werkzeug Debugger|django\.core\.exceptions|Whitelabel Error Page.*Exception|java\.lang\.\w+Exception|"
@@ -162,6 +261,7 @@ class Response:
     status: int
     headers: dict[str, str]
     body: str
+    cookies: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -204,6 +304,7 @@ class Client:
         self.result = result
         self.should_stop = should_stop
         self.limit = MAX_REQUESTS
+        self.cookies: dict[str, tuple[str, dict[str, str]]] = {}  # name -> (path, attributes). Values are never kept.
         # Loopback only: ignore any proxy settings so requests can't leave the machine.
         self.opener = urllib.request.build_opener(_NoRedirect, urllib.request.ProxyHandler({}))
 
@@ -220,16 +321,27 @@ class Client:
                                          headers={"User-Agent": "LadPock live check", **(headers or {})})
         try:
             with self.opener.open(request, timeout=TIMEOUT) as resp:
+                cookies = resp.headers.get_all("Set-Cookie") or []
+                self._note_cookies(path, cookies)
                 return Response(resp.status, {k.lower(): v for k, v in resp.headers.items()},
-                                resp.read(MAX_BODY).decode("utf-8", "replace"))
+                                resp.read(MAX_BODY).decode("utf-8", "replace"), cookies)
         except urllib.error.HTTPError as err:
             try:
                 text = err.read(MAX_BODY).decode("utf-8", "replace")
             except OSError:
                 text = ""
-            return Response(err.code, {k.lower(): v for k, v in (err.headers or {}).items()}, text)
+            cookies = (err.headers.get_all("Set-Cookie") if err.headers else None) or []
+            self._note_cookies(path, cookies)
+            return Response(err.code, {k.lower(): v for k, v in (err.headers or {}).items()}, text, cookies)
         except (urllib.error.URLError, http.client.HTTPException, OSError, ValueError):
             return None
+
+
+    def _note_cookies(self, path: str, cookies: list[str]) -> None:
+        for raw in cookies:
+            name = raw.split("=", 1)[0].strip()
+            attributes = {part.split("=", 1)[0].strip().lower(): part.split("=", 1)[-1].strip().lower() for part in raw.split(";")[1:]}
+            self.cookies.setdefault(name, (path, attributes))
 
 
 def _looks_like_page(resp: Response) -> bool:
@@ -334,10 +446,17 @@ def run_probe(url: str, routes: list[Route], *, include_writes: bool = False, lo
             result.findings.append(_finding(UNAUTHENTICATED, route, base + path, message,
                                             snippet=f"{method} {path} -> {resp.status}"))
 
+    client.limit = result.requests + MAX_PROBE_REQUESTS
     for route in routes:
         if AUTH_FLOW.search(route.path) and route.method in ("POST", "ANY") and _route_path(route):
             _login_burst(client, result, base, route)
             break
+
+    # Most data needs a login, so these use account A's when there is one. They only read.
+    login = logins[0] if logins else {}
+    _reflection(client, result, base, routes, login)
+    _sql_errors(client, result, base, routes, login)
+    _redirects(client, result, base, routes)
 
     if logins:
         client.limit = result.requests + MAX_ACCOUNT_REQUESTS
@@ -352,6 +471,7 @@ def run_probe(url: str, routes: list[Route], *, include_writes: bool = False, lo
             if match:
                 result.findings.append(_finding(STACK_TRACE, route, base + path, snippet=match.group(0)[:160]))
                 break
+    _cookie_flags(result, base, client.cookies)
     if result.stopped_early:
         result.notes.append(f"Stopped after {result.requests} requests, so some routes weren't called.")
     if result.skipped_writes:
@@ -361,6 +481,84 @@ def run_probe(url: str, routes: list[Route], *, include_writes: bool = False, lo
         log(f"Live checks: {note}")
     log(f"Live checks: {result.requests} requests, {len(result.findings)} problem(s) confirmed.")
     return result
+
+
+def _get_routes(routes: list[Route]) -> list[Route]:
+    return [r for r in routes if r.method in ("GET", "ANY") and _route_path(r)]
+
+
+def _reflection(client: Client, result: ProbeResult, base: str, routes: list[Route], login: dict) -> None:
+    """Does a marker in the query string come back as raw HTML? One request per page, and one for the not-found page."""
+    query = urlencode({name: REFLECT_MARK for name in REFLECT_PARAMS})
+    targets = [(_route_path(r), r) for r in _get_routes(routes)[:MAX_PROBED_ROUTES]] + [(path, None) for path in GUESSED_PAGES]  # known routes first, for the line of code
+    seen = set()
+    for path, route in targets:
+        if path in seen:
+            continue
+        seen.add(path)
+        resp = client.send("GET", f"{path}?{query}", {"Accept": "text/html", **login})
+        if resp and "html" in resp.headers.get("content-type", "") and REFLECT_MARK in resp.body:
+            result.findings.append(_finding(REFLECTED, route, base + path, snippet=f"GET {path}?q=... -> the HTML came back unescaped"))
+            return
+    resp = client.send("GET", "/ladpock7x%22%3Cb%3E", {"Accept": "text/html", **login})
+    if resp and "html" in resp.headers.get("content-type", "") and REFLECT_MARK in resp.body:
+        result.findings.append(_finding(REFLECTED, None, base + "/", snippet="The not-found page puts the address back unescaped"))
+
+
+def _sql_errors(client: Client, result: ProbeResult, base: str, routes: list[Route], login: dict) -> None:
+    """A stray quote that causes a database syntax error, when an ordinary value doesn't."""
+    tried = 0
+    for route in _get_routes(routes):
+        if tried >= MAX_PROBED_ROUTES:
+            break
+        if not (route.db or DYNAMIC_SEGMENT.search(route.path)):
+            continue
+        tried += 1
+        pattern = route.path.strip("^$")
+        if DYNAMIC_SEGMENT.search(pattern):
+            quoted, ordinary = DYNAMIC_SEGMENT.sub("1%27", pattern), DYNAMIC_SEGMENT.sub("1", pattern)
+        else:
+            quoted, ordinary = f"{pattern}?id=1%27&q=1%27&search=1%27", f"{pattern}?id=1&q=1&search=1"
+        resp = client.send("GET", quoted, {"Accept": "application/json", **login})
+        match = SQL_SYNTAX_ERROR.search(resp.body) if resp else None
+        if not match:
+            continue
+        normal = client.send("GET", ordinary, {"Accept": "application/json", **login})
+        if normal and not SQL_SYNTAX_ERROR.search(normal.body):
+            result.findings.append(_finding(SQL_ERROR_FOUND, route, base + quoted, snippet=f"GET {quoted} -> {match.group(0)[:80]}"))
+
+
+def _redirects(client: Client, result: ProbeResult, base: str, routes: list[Route]) -> None:
+    """A made-up address in redirect parameters. The redirect is read, never followed."""
+    target = f"{EVIL_ORIGIN}/x"
+    query = urlencode({name: target for name in REDIRECT_PARAMS})
+    known = [(_route_path(r), r) for r in _get_routes(routes) if REDIRECTY.search(r.path)][:MAX_PROBED_ROUTES]
+    seen = set()
+    for path, route in known + [(path, None) for path in GUESSED_PAGES]:
+        if path in seen:
+            continue
+        seen.add(path)
+        resp = client.send("GET", f"{path}?{query}")
+        location = resp.headers.get("location", "") if resp and 300 <= resp.status < 400 else ""
+        if location.startswith((EVIL_ORIGIN, EVIL_ORIGIN.replace("https:", ""), EVIL_ORIGIN.replace("https:", "http:"))):
+            result.findings.append(_finding(OPEN_REDIRECT, route, base + path, snippet=f"GET {path}?next=... -> {resp.status} to the made-up address"))
+            return
+
+
+def _cookie_flags(result: ProbeResult, base: str, cookies: dict[str, tuple[str, dict[str, str]]]) -> None:
+    for name, (path, attributes) in sorted(cookies.items()):
+        if not SESSION_COOKIE.search(name) or NOT_SESSION_COOKIE.search(name):
+            continue
+        missing = [flag for flag, attr in (("HttpOnly", "httponly"), ("SameSite", "samesite")) if attr not in attributes]
+        if base.startswith("https://") and "secure" not in attributes:
+            missing.append("Secure")
+        if attributes.get("samesite") == "none" and "secure" not in attributes and "Secure" not in missing:
+            missing.append("Secure (SameSite=None needs it)")
+        if missing:
+            serious = "HttpOnly" in missing or len(missing) > 1 or missing[0] != "SameSite"
+            result.findings.append(_finding(
+                COOKIE_FLAGS, None, base + path, severity=Severity.MEDIUM if serious else Severity.LOW,
+                snippet=f"Set-Cookie: {name} ... missing {', '.join(missing)}"))
 
 
 def _answered(resp: Response | None) -> bool:
@@ -483,7 +681,7 @@ class _TwoAccounts:
     def run(self) -> None:
         for route in self.gets:
             if not DYNAMIC_SEGMENT.search(route.path):
-                self.read_list(_route_path(route))
+                self.read_list(route, _route_path(route))
         for route in self.gets:
             slots = list(DYNAMIC_SEGMENT.finditer(route.path))
             if len(slots) == 1:
@@ -501,19 +699,25 @@ class _TwoAccounts:
                 self.admin(route)
         self.add_notes()
 
-    def read_list(self, path: str) -> None:
+    def read_list(self, route: Route, path: str) -> None:
         self.known[path.rstrip("/")] = path
         as_a, as_b = self.listing(path)
         if not _answered(as_a):
             return
         if not _answered(self.get(path)):
             self.signed_in = True
+            self.check_cacheable(route, path, as_a)
         if IDENTITY_PATH.search(path.rstrip("/")) and _answered(as_b):
             fields = (*IDENTITY_FIELDS, *ID_FIELDS)
             mine = next((i for i in (_id_of(o, fields) for o in _object_of(as_a.body)) if i), None)
             theirs = next((i for i in (_id_of(o, fields) for o in _object_of(as_b.body)) if i), None)
             if mine and theirs and mine != theirs:
                 self.identity, self.identity_source = mine, path
+
+    def check_cacheable(self, route: Route | None, path: str, resp: Response) -> None:
+        policy = resp.headers.get("cache-control", "").lower()
+        if re.search(r"\bpublic\b|\bs-maxage=[1-9]", policy) and "no-store" not in policy and "private" not in policy:
+            self.result.findings.append(_finding(CACHEABLE, route, self.base + path, snippet=f"GET {path} -> Cache-Control: {policy}"))
 
     def source_for(self, head: str) -> str:
         """The list that names these records: its own parent path, or a list with the same name (/orders/[id] and /api/orders)."""
@@ -684,6 +888,15 @@ def _sensitive_files(client: Client, result: ProbeResult, base: str) -> None:
             if path.startswith("/.env") and "=" in preview:
                 preview = preview.split("=", 1)[0] + "=****"
             result.findings.append(_finding(EXPOSED_FILE, None, base + path, snippet=f"GET {path} -> 200 {preview}"))
+    for path in LISTING_PATHS:
+        resp = client.send("GET", path)
+        if resp and resp.status == 200 and LISTING.search(resp.body):
+            result.findings.append(_finding(DIRECTORY_LISTING, None, base + path, snippet=f"GET {path} -> a list of the folder's files"))
+    for path, signature in DOCS_PATHS:
+        resp = client.send("GET", path)
+        if resp and resp.status == 200 and signature.search(resp.body):
+            result.findings.append(_finding(API_DOCS, None, base + path, confidence="low", snippet=f"GET {path} -> 200"))
+            break
 
 
 def _login_burst(client: Client, result: ProbeResult, base: str, route: Route) -> None:

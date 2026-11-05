@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import html
 import http.server
 import json
 import threading
 import unittest
 from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 from helpers import isolated_home, materialize
 
@@ -45,7 +47,20 @@ class Leaky(_Base):
         if self.path == "/":
             origin = self.headers.get("Origin")
             cors = {"Access-Control-Allow-Origin": origin, "Access-Control-Allow-Credentials": "true"} if origin else {}
-            return self.reply(200, HOME, "text/html", {"X-Powered-By": "Express", "Server": "nginx/1.18.0", **cors})
+            return self.reply(200, HOME, "text/html", {"X-Powered-By": "Express", "Server": "nginx/1.18.0", **cors,
+                                                       "Set-Cookie": "session=leaky-cookie-value; Path=/"})
+        if "%27" in self.path:
+            return self.reply(500, 'error: syntax error at or near "1\'"', "text/plain")
+        if self.path.startswith("/search?"):
+            query = parse_qs(urlsplit(self.path).query)
+            return self.reply(200, f"<html><body>Results for {query.get('q', [''])[0]}</body></html>", "text/html")
+        if self.path.startswith("/login?"):
+            query = parse_qs(urlsplit(self.path).query)
+            return self.reply(302, "", headers={"Location": query.get("next", ["/"])[0]})
+        if self.path == "/uploads/":
+            return self.reply(200, "<html><title>Index of /uploads</title><body>a.pdf</body></html>", "text/html")
+        if self.path == "/openapi.json":
+            return self.reply(200, json.dumps({"openapi": "3.0.0"}), "application/json")
         if self.path == "/.env":
             return self.reply(200, "API_KEY=abc123\nDATABASE_URL=postgres://x\n")
         if self.path == "/.git/HEAD":
@@ -80,8 +95,15 @@ class Hardened(_Base):
     def do_GET(self):
         if self.path.startswith("/api/"):
             return self.reply(401, json.dumps({"error": "login required"}), "application/json", self.secure())
-        if self.path == "/" or self.path.startswith("/."):
-            return self.reply(200, HOME, "text/html", self.secure())  # single-page app fallback
+        if self.path.startswith("/search?"):
+            query = parse_qs(urlsplit(self.path).query)
+            escaped = html.escape(query.get("q", [""])[0])
+            return self.reply(200, f"<html><body>Results for {escaped}</body></html>", "text/html", self.secure())
+        if self.path.startswith("/login?"):
+            return self.reply(302, "", headers={"Location": "/dashboard", **self.secure()})  # ignores the address it was given
+        if self.path == "/" or self.path.startswith("/.") or self.path.startswith("/?"):
+            cookies = {"Set-Cookie": "session=safe; Path=/; HttpOnly; SameSite=Lax"}
+            return self.reply(200, HOME, "text/html", {**self.secure(), **cookies})  # single-page app fallback
         return self.reply(404, "Not found", "text/plain", self.secure())
 
     do_HEAD = do_GET
@@ -104,6 +126,7 @@ ROUTES = [
     Route("GET", "/api/orders/[id]", "app/api/orders/[id]/route.ts", 5, "route", auth="yes", db=True, dynamic=True),
     Route("DELETE", "/api/orders/[id]", "app/api/orders/[id]/route.ts", 20, "route", auth="yes"),
     Route("POST", "/api/login", "app/api/login/route.ts", 3, "route"),
+    Route("GET", "/search", "app/search/route.ts", 2, "route"),
 ]
 
 
@@ -125,8 +148,13 @@ class LiveChecks(unittest.TestCase):
         by_id = {}
         for f in result.findings:
             by_id.setdefault(f.check_id, []).append(f)
-        self.assertEqual(set(by_id), {"LP-LIVE-001", "LP-LIVE-002", "LP-LIVE-003", "LP-LIVE-004", "LP-LIVE-005",
-                                      "LP-LIVE-006", "LP-LIVE-007"})
+        self.assertEqual(set(by_id), {"LP-LIVE-001", "LP-LIVE-002", "LP-LIVE-003", "LP-LIVE-004", "LP-LIVE-005", "LP-LIVE-006",
+                                      "LP-LIVE-007", "LP-LIVE-010", "LP-LIVE-011", "LP-LIVE-012", "LP-LIVE-013", "LP-LIVE-015",
+                                      "LP-LIVE-016"})
+        self.assertEqual(by_id["LP-LIVE-012"][0].file, "app/api/orders/[id]/route.ts")  # the stray quote, linked to the code
+        self.assertEqual(by_id["LP-LIVE-011"][0].file, "app/search/route.ts")
+        self.assertIn("HttpOnly", by_id["LP-LIVE-010"][0].snippet)
+        self.assertNotIn("leaky-cookie-value", json.dumps([f.snippet for f in result.findings] + [f.message for f in result.findings]))
         unauth = by_id["LP-LIVE-001"][0]
         self.assertEqual((unauth.file, unauth.line), ("app/api/orders/[id]/route.ts", 5))  # linked to the code
         self.assertIn("appears to check the user", unauth.message)
@@ -331,6 +359,31 @@ def account_routes():
             Route("DELETE", "/api/orders/[id]", "order.ts", 30, "route", auth="yes")]
 
 
+class CachedOrders(TwoUsers):
+    """Answers correctly, but tells every cache it may keep the answer."""
+
+    def reply(self, status, body, content_type="text/plain", headers=None):
+        return super().reply(status, body, content_type, {**(headers or {}), "Cache-Control": "public, max-age=600"})
+
+
+class SyntaxErrorForAccounts(TwoUsers):
+    """The stray quote only causes an error for someone signed in."""
+
+    def answer(self, who, path):
+        if "%27" in path:
+            return self.reply(500, "SQLSTATE[42000]: You have an error in your SQL syntax", "text/plain")
+        return super().answer(who, path)
+
+
+class TypedIdError(TwoUsers):
+    """A parameterised query rejecting a bad value isn't SQL injection."""
+
+    def answer(self, who, path):
+        if "%27" in path:
+            return self.reply(500, 'SQLSTATE[22P02]: invalid input syntax for type integer: "1\'"', "text/plain")
+        return super().answer(who, path)
+
+
 class TwoAccountChecks(unittest.TestCase):
     def setUp(self):
         TwoUsers.calls = []
@@ -394,6 +447,14 @@ class TwoAccountChecks(unittest.TestCase):
         result = self.probe(TwoUsers, routes=routes)
         self.assertEqual(result.accounts["records_checked"], 0)
         self.assertTrue(any("same records" in note for note in result.notes), result.notes)
+
+    def test_private_answers_marked_cacheable(self):
+        self.assertIn("orders.ts", self.found(self.probe(CachedOrders), "LP-LIVE-014"))
+        self.assertEqual(self.found(self.probe(TwoUsers), "LP-LIVE-014"), [])
+
+    def test_probes_use_the_login(self):
+        self.assertIn("order.ts", self.found(self.probe(SyntaxErrorForAccounts), "LP-LIVE-012"))
+        self.assertEqual(self.found(self.probe(TypedIdError), "LP-LIVE-012"), [])
 
     def test_records_you_name_yourself(self):
         routes = [Route("GET", "/api/orders/[id]", "order.ts", 3, "route", auth="yes", dynamic=True)]
