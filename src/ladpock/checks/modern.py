@@ -1,3 +1,4 @@
+# ladpock-ignore-file: LP-AI-006 (this file defines that pattern)
 """Checks for how apps get built now: AI features, file uploads, secrets in logs,
 trusting what the browser says, and what's left behind after building fast.
 
@@ -133,6 +134,104 @@ regex_check(
             r"\bcreate_(?:pandas_dataframe|csv|python|spark_dataframe)_agent\s*\(|\bnew\s+(?:Shell|Bash)Tool\s*\(",
     exts=PY_EXT | JS_EXT, cwe=("CWE-94", "CWE-78"),
 )
+
+_OPEN_AI_SERVER = (
+    r"""\bOLLAMA_HOST\s*[=:]\s*['"]?(?:https?://)?0\.0\.0\.0|\bWEBUI_AUTH\s*[=:]\s*['"]?(?:False|false|0)\b|"""
+    r"""\.launch\([^)\n]*\bshare\s*=\s*True|\.launch\([^)\n]*\bserver_name\s*=\s*['"]0\.0\.0\.0['"]|"""
+    r"""\b(?:llama-server|vllm\s+serve|text-generation-webui|comfyui|main\.py)\b[^\n]*(?:--host\s+0\.0\.0\.0|--listen\b(?!\s+127\.))|"""
+    r"""\bJUPYTER_TOKEN\s*[=:]\s*['"]{2}|--NotebookApp\.token=['"]{2}|--ServerApp\.token=['"]{2}|--ip=0\.0\.0\.0[^\n]*--(?:NotebookApp|ServerApp)\.token=['"]{0,2}\s"""
+)
+regex_check(
+    "LP-AI-006", "AI tool or notebook open to the network", "abuse", Severity.HIGH,
+    why="This puts a model server, a demo or a notebook where other people can reach it, usually with no login. Someone can run up "
+        "your costs and use your GPU, read what's being processed, or in a notebook's case run code on your machine.",
+    fix="Keep it on 127.0.0.1 and reach it through a VPN or SSH tunnel, or put a login in front. For Gradio, pass auth= if you really "
+        "need a shared link.",
+    pattern=_OPEN_AI_SERVER,
+    exts=PY_EXT | frozenset({".yml", ".yaml", ".sh", ".bash", ".ps1", ".env", ".service", ".toml"}), names={"Dockerfile", "Procfile", "Makefile"},
+    include_env=True, cwe=("CWE-306", "CWE-668"), unless=r"\bauth\s*=",
+)
+regex_check(
+    "LP-AI-007", "HTML from a user or a model shown without escaping", "injection", Severity.MEDIUM,
+    why="unsafe_allow_html puts text straight into the page as HTML. If any of it comes from a user or a model's reply, it can run "
+        "scripts in the browser of whoever is looking at it.",
+    fix="Display it with st.write or st.text, or clean it first with a library such as bleach or nh3.",
+    pattern=r"\bunsafe_allow_html\s*=\s*True\b",
+    exts=PY_EXT, cwe=("CWE-79",), unless=r"""(?:markdown|html)\(\s*(?:['"]{1,3}|f?['"]{3}\s*<style)""", confidence="low",
+)
+
+_MCP_PY_TOOL = re.compile(r"@\w*(?:mcp|server|app)\w*\.(?:tool|call_tool)\s*\(")
+_MCP_JS_TOOL = re.compile(r"\b\w*(?:server|mcp)\w*\.(?:tool|registerTool)\s*\(")
+_MCP_RUNS = re.compile(r"\b(?:subprocess\.\w+|os\.system|os\.popen|eval|exec|execSync|spawnSync|spawn|child_process\.\w+)\s*\(")
+_MCP_FILES = re.compile(r"\b(?:open|readFile\w*|writeFile\w*|fs\.\w+|Path\(|shutil\.\w+|os\.remove|unlink\w*)\s*\(")
+_MCP_PATH_CHECK = re.compile(r"\b(?:resolve|realpath|abspath|is_relative_to|startswith|startsWith|allowed|ALLOWED|sandbox|safe_path|isPathInside)\b")
+_MCP_SERVER = re.compile(r"\bFastMCP\b|\bfrom\s+mcp\b|\bimport\s+mcp\b|@modelcontextprotocol/sdk|\bMcpServer\b")
+_MCP_NETWORK = re.compile(r"""\.run\([^)\n]*transport\s*=\s*['"](?:sse|streamable-http|http)['"]|\b(?:SSEServerTransport|StreamableHTTPServerTransport)\b""")
+_MCP_AUTH = re.compile(r"(?i)\bauth\b|\bbearer\b|\bapi_?key\b|\btoken_?verifier\b|\boauth\b|\bauthorization\b|127\.0\.0\.1|localhost")
+
+
+@check(
+    "LP-AI-008", "MCP tool runs commands or touches files the model chose", "injection", Severity.HIGH,
+    why="A model calls this tool with arguments it decides, and what it decides can be steered by any text it reads: a web page, an "
+        "email, a file. So whoever writes that text can run commands or read files on this computer.",
+    fix="Give each tool one narrow job with arguments you check. Don't take a whole command or an open-ended path, and keep file access "
+        "inside one allowed folder.",
+    cwe=("CWE-78", "CWE-22", "CWE-1427"),
+    stacks=("mcp",),
+)
+def mcp_tools(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
+    for rel in ctx.index.sources(PY_EXT | JS_EXT):
+        code = ctx.index.read(rel) or ""
+        if not _MCP_SERVER.search(code):
+            continue
+        tools = [(m.start(), m.group(0)) for m in islice(_MCP_PY_TOOL.finditer(code), 200)] + [(m.start(), m.group(0)) for m in islice(_MCP_JS_TOOL.finditer(code), 200)]
+        tools.sort()
+        for i, (start, _) in enumerate(tools):
+            end = tools[i + 1][0] if i + 1 < len(tools) else min(len(code), start + 8000)
+            body = code[start: min(end, start + 8000)]
+            runs = _MCP_RUNS.search(body)
+            if runs:
+                yield ctx.finding(info, rel, line_of(code, start + runs.start()), body[runs.start(): runs.start() + 120].split("\n")[0], confidence="medium")
+            elif _MCP_FILES.search(body) and not _MCP_PATH_CHECK.search(body):
+                files = _MCP_FILES.search(body)
+                yield ctx.finding(info, rel, line_of(code, start + files.start()), body[files.start(): files.start() + 120].split("\n")[0],
+                                  severity=Severity.MEDIUM, confidence="low",
+                                  message="This tool reads or writes a file with nothing checking the path stays inside an allowed folder. "
+                                          "A model can be steered by text it reads into asking for your keys or other private files.")
+
+
+@check(
+    "LP-AI-009", "MCP server on the network with no login", "authz", Severity.HIGH,
+    why="This MCP server listens over HTTP instead of talking to one local program. Anyone who can reach it can call its tools, and a "
+        "website you visit may be able to reach one on your own computer.",
+    fix="Use the stdio transport for local use. Over HTTP, bind to 127.0.0.1 and require a token or OAuth, and check the Origin header.",
+    cwe=("CWE-306", "CWE-284"),
+    stacks=("mcp",),
+)
+def mcp_network(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
+    for rel in ctx.index.sources(PY_EXT | JS_EXT):
+        code = ctx.index.read(rel) or ""
+        match = _MCP_NETWORK.search(code)
+        if match and _MCP_SERVER.search(code) and not _MCP_AUTH.search(code):
+            yield ctx.finding(info, rel, line_of(code, match.start()), match.group(0), confidence="medium")
+
+
+_MESSAGE_LISTENER = re.compile(r"""\b(?:window|self|globalThis)\.addEventListener\(\s*['"]message['"]|\bwindow\.onmessage\s*=|\bonMessageExternal\.addListener\(""")
+_ORIGIN_CHECK = re.compile(r"\.origin\b|\bsender\.(?:id|origin|url|tab)\b|\.source\s*[!=]==")
+
+
+@check(
+    "LP-INJ-014", "Messages accepted from any site", "injection", Severity.MEDIUM,
+    why="Any page can send a message to this listener, including one that opened yours in a window or a frame. Without checking who sent "
+        "it, another site can drive this code as if it were your own page.",
+    fix="Check event.origin against the exact sites you expect before using the message (sender.id or sender.origin in an extension).",
+    cwe=("CWE-346", "CWE-345"),
+)
+def message_listeners(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
+    for rel, lineno, line, _ in grep(ctx, _MESSAGE_LISTENER, exts=JS_EXT):
+        if not near(ctx.index.lines(rel)[lineno - 1:], 1, _ORIGIN_CHECK, 25):
+            yield ctx.finding(info, rel, lineno, line)
+
 
 # ---------- file uploads ----------
 
@@ -505,9 +604,9 @@ regex_check(
 _SERVER_CONFIG = re.compile(r"(?i)(?:^|/)(?:nginx[^/]*\.conf|[^/]*\.nginx|default\.conf|httpd\.conf|apache[^/]*\.conf|\.htaccess|Caddyfile)$|(?:^|/)(?:nginx|sites-available|sites-enabled|conf\.d)/[^/]+$")
 _ALIAS_ESCAPE = re.compile(r"\blocation\s+(/[^\s{;]{0,200}[^/\s{;])\s*\{[^}]{0,2000}?\balias\s+[^;\n]{0,500}/\s*;")
 _SERVER_RULES = [
-    (re.compile(r"(?m)^\s*autoindex\s+on\s*;|^\s*Options\s+[^\n]*(?<![-\w])\+?Indexes\b|^\s*file_server\s+browse\b"), Severity.MEDIUM,
+    (re.compile(r"(?m)^[ \t]*autoindex\s+on\s*;|^[ \t]*Options\s+[^\n]*(?<![-\w])\+?Indexes\b|^[ \t]*file_server\s+browse\b"), Severity.MEDIUM,
      "This lists every file in the folder to anyone who opens its address."),
-    (re.compile(r"(?m)^\s*ssl_protocols\s+[^;\n]*\b(?:SSLv3|TLSv1(?:\.1)?)(?![.\d])|^\s*SSLProtocol\s+[^\n]*\+(?:SSLv3|TLSv1(?:\.1)?)(?![.\d])"), Severity.MEDIUM,
+    (re.compile(r"(?m)^[ \t]*ssl_protocols\s+[^;\n]*\b(?:SSLv3|TLSv1(?:\.1)?)(?![.\d])|^[ \t]*SSLProtocol\s+[^\n]*\+(?:SSLv3|TLSv1(?:\.1)?)(?![.\d])"), Severity.MEDIUM,
      "This allows old versions of TLS with known weaknesses. Use TLSv1.2 and TLSv1.3 only."),
 ]
 

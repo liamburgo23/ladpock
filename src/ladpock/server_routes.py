@@ -537,7 +537,7 @@ def python_routes(index: FileIndex, route_cls) -> list:
     files = {}
     for rel in index.sources(PY_EXT):
         text = index.read(rel) or ""
-        if re.search(r"^\s*(?:from|import)\s+(?:fastapi|flask|django|rest_framework|starlette|quart|sanic)\b", text, re.M):
+        if re.search(r"^[ \t]*(?:from|import)\s+(?:fastapi|flask|django|rest_framework|starlette|quart|sanic)\b", text, re.M):
             files[rel] = _py_strip(text)
     if not files:
         return []
@@ -552,7 +552,7 @@ def python_routes(index: FileIndex, route_cls) -> list:
                        if PY_AUTH.search(code[m.start(): m.start() + 400])}
         before_request_auth = bool(re.search(r"@\w+\.before_(?:app_)?request[\s\S]{0,600}?(?:login|auth|current_user|session|abort\(401)", code))
         limiter_default = bool(re.search(r"Limiter\([^)]*default_limits", code, re.S))
-        kind = "fastapi" if re.search(r"^\s*from\s+fastapi\b|^\s*import\s+fastapi\b", code, re.M) else "flask"
+        kind = "fastapi" if re.search(r"^[ \t]*from\s+fastapi\b|^[ \t]*import\s+fastapi\b", code, re.M) else "flask"
         for fn in py_functions(code):
             decorators = fn.decorators
             matched = False
@@ -576,7 +576,7 @@ def python_routes(index: FileIndex, route_cls) -> list:
                     route = _py_assess(route, decorators + "\n" + fn.signature + "\n" + fn.body, fn.body, code,
                                        receiver in router_auth or before_request_auth, limiter_default, validated)
                     routes.append(route)
-            if matched or not re.search(r"^\s*from\s+(?:django|rest_framework)\b", code, re.M):
+            if matched or not re.search(r"^[ \t]*from\s+(?:django|rest_framework)\b", code, re.M):
                 continue
             routes.extend(_django_view(route_cls, rel, fn, code, django_urls, drf_default_auth))
         for viewset in capped(re.finditer(r"(?m)^class\s+(\w+)\(([^)]*ModelViewSet[^)]*)\):", code)):

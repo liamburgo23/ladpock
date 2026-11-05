@@ -282,8 +282,8 @@ def k8s_no_limits(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
         for doc_start, doc in _documents(text):
             if not re.search(r"(?m)^kind:\s*(?:Deployment|StatefulSet|DaemonSet|Pod|Job|CronJob|ReplicaSet)\s*$", doc):
                 continue
-            match = re.search(r"(?m)^\s*containers:\s*$", doc)
-            if match and not re.search(r"(?m)^\s*limits:\s*$", doc):
+            match = re.search(r"(?m)^[ \t]*containers:\s*$", doc)
+            if match and not re.search(r"(?m)^[ \t]*limits:\s*$", doc):
                 lineno = text.count("\n", 0, doc_start + match.start()) + 1
                 yield ctx.finding(info, rel, lineno, ctx.index.lines(rel)[lineno - 1])
 

@@ -20,7 +20,7 @@ PUBLIC_SECRET_VAR = re.compile(
 SERVER_SUPABASE_ENV = re.compile(
     r"(?:process\.env|import\.meta\.env)\.(?:SUPABASE_SERVICE_ROLE_KEY|SUPABASE_SECRET_KEY|\w*SERVICE_ROLE\w*)"
 )
-CLIENT_DIRECTIVE = re.compile(r"""^\s*['"]use client['"]""", re.M)
+CLIENT_DIRECTIVE = re.compile(r"""^[ \t]*['"]use client['"]""", re.M)
 # Public env prefixes only matter where a bundler can inline them: front-end code, env files and config.
 BUNDLED_EXT = JS_EXT | {".json", ".jsonc", ".toml", ".yml", ".yaml", ".html"}
 MCP_CONFIG_NAMES = {".mcp.json", "mcp.json", "claude_desktop_config.json"}
@@ -32,7 +32,7 @@ PRIVATE_KEY_BLOCK = re.compile(r"-----BEGIN (?:[A-Z]+ )*PRIVATE KEY-----")
 ENCRYPTED_KEY = re.compile(r"-----BEGIN (?:ENCRYPTED) PRIVATE KEY-----|Proc-Type:\s*4,ENCRYPTED")
 TOKEN_RULES = {
     ".npmrc": re.compile(r"(?m)_(?:authToken|password|auth)\s*=\s*(?!\$\{)\S+"),
-    ".pypirc": re.compile(r"(?m)^\s*password\s*[=:]\s*\S+"),
+    ".pypirc": re.compile(r"(?m)^[ \t]*password\s*[=:]\s*\S+"),
     ".netrc": re.compile(r"\bpassword\s+\S+"),
     "_netrc": re.compile(r"\bpassword\s+\S+"),
     ".git-credentials": re.compile(r"://[^:/\s]+:[^@\s]+@"),

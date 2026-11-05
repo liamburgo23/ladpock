@@ -27,7 +27,7 @@ CRITICAL (6)
 
 ## What it does
 
-- **192 built-in checks** across secrets, sign-in, authorization, API abuse and cost, injection, payments,
+- **201 built-in checks** across secrets, sign-in, authorization, API abuse and cost, injection, payments,
   crypto, config, supply chain, and AI-generated code smells. Run `ladpock checks` for the list, or see
   [docs/CHECKS.md](docs/CHECKS.md).
 - **A route matrix** for Next.js (App Router, Pages API and server actions), SvelteKit, Remix, Nuxt, Astro, Express,
@@ -55,7 +55,11 @@ CRITICAL (6)
   language's own spelling of SQL injection, command injection, unsafe deserialisation, weak crypto and more.
 - **Software that isn't a web app:** buffer overflows, format strings and shell commands in C and C++; `eval`, unsafe
   deletes, turned-off certificate checks and passwords in shell and PowerShell scripts; programs downloaded over plain HTTP;
-  and Solidity contracts (reentrancy, `tx.origin`, sensitive functions anyone can call, predictable randomness).
+  Solidity contracts (reentrancy, `tx.origin`, sensitive functions anyone can call, predictable randomness); browser extensions
+  (access to every site, settings that let websites in); MCP servers (tools that run what a model chose, no login over the
+  network); Jupyter notebooks (keys in cells and outputs); and Arduino and ESP32 sketches (Wi-Fi passwords, turned-off certificate checks).
+- **Private keys and credentials files in the repository:** SSH and TLS keys, Firebase and Google service account keys, key stores,
+  `.git-credentials`, `.npmrc` tokens.
 - **More than 50 provider secret formats** (cloud, AI, payment, source-control, messaging and observability tokens),
   masked everywhere they appear.
 - **A Tauri pack and command matrix.** It checks the Content-Security-Policy, capability files (remote access,
@@ -355,7 +359,7 @@ won't replace an existing hook unless you pass `--force`; `ladpock hook remove` 
 ### In CI
 
 ```yaml
-- uses: liamburgo23/ladpock@v0.15.0
+- uses: liamburgo23/ladpock@v0.16.0
   with:
     fail-on: high   # critical, high, medium or low; leave empty to never fail
 ```
@@ -377,7 +381,7 @@ ladpock scan . --write-baseline .ladpock-baseline.json
 ```
 
 ```yaml
-- uses: liamburgo23/ladpock@v0.15.0
+- uses: liamburgo23/ladpock@v0.16.0
   with:
     baseline: .ladpock-baseline.json
 ```
@@ -437,7 +441,8 @@ masked, and your folder path isn't included. It does contain code snippets, so s
 | Firebase Functions, Supabase Edge, Vercel, Netlify, Cloudflare, AWS Lambda (Serverless Framework, SAM) | Route matrix per function, plus Supabase and Firebase rules |
 | Rust (Axum, Actix, Rocket), Elysia, Hapi, Sinatra, Symfony, Ktor, JAX-RS, Micronaut | Route matrix |
 | OpenAI, Anthropic, Vercel AI SDK, LangChain | AI key exposure, prompt injection, running AI output, cost abuse |
-| C/C++, shell, PowerShell, Solidity | Language-specific checks for memory safety, command injection, unsafe scripts and contract bugs |
+| C/C++, shell, PowerShell, Solidity, Arduino | Language-specific checks for memory safety, command injection, unsafe scripts, contract bugs and device secrets |
+| Browser extensions, MCP servers, Jupyter notebooks, Gradio, Streamlit | Extension permissions and messaging, MCP tools and transports, secrets in notebooks, AI tools open to the network |
 | PHP, Ruby, Java, C#, Rust, Go | Language-specific injection, crypto, config and framework-setting checks |
 | Anything else | Generic checks: secrets, dependencies, injection patterns, config, AI code smells |
 

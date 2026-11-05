@@ -356,6 +356,20 @@ findings. `{code}` doesn't count: a short code can be guessed.
 **Key files.** `FileIndex` only reads known text types, so `id_rsa` and `server.key` were invisible. `SENSITIVE_FILE` records them during the walk. Only what git tracks
 counts, because a correctly ignored key isn't in the repository. PEM files must really hold a private key, since most `.pem` files are public certificates.
 
+## Malformed input, and more kinds of software (0.16.0)
+
+**Files that lie about their shape.** `tests/test_slow_input.py` writes about 40 kinds of odd content (wrong types at every key, deep nesting, binary, 100,000 blank lines) to
+every file LadPock parses, then runs everything. Its first run found real crashes in stack detection, the route readers, dependency reading and the SBOM, from nothing
+worse than a `package.json` holding `{"dependencies": 5}`, and a hang in a regex. Three lessons:
+- **`RecursionError` isn't a `ValueError`.** Deep JSON raises it, so `files.load_json` catches both. `as_dict` and `as_list` are there because a scanned file can hold anything at any key.
+- **`^\s*` with `re.M` is quadratic on blank lines**, because `\s` matches the line break too. Every multi-line pattern now uses `^[ \t]*`.
+- **Isolate the readers.** `routes.analyze` runs each framework's reader separately, so one failure is a warning and doesn't lose the table.
+
+**Comment skipping.** `grep` skips lines starting with `#`, which also hid C's `#define`. `COMMENT_LINE` now leaves preprocessor lines alone.
+
+**More kinds of software.** Notebooks are read up to 20 MB, because saved charts make them big and keys can sit in any cell or output. MCP tools are flagged because a model
+picks their arguments, and any text it reads can steer that, so a tool taking a whole command is remote code execution with extra steps.
+
 ## Next milestones
 
 1. **Paid online scanners.** Optional integrations with commercial scanners using your own account, behind the same

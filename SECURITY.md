@@ -83,7 +83,9 @@ follows; a change that breaks one is a security bug.
 
 13. **Scanned code can't stall a scan by being large or crafted to be slow.** Structural analysis skips files over 400 KB and
    minified files, bracket matching stops after 100 KB, and repeated searches stop after 300 matches per file. Patterns that
-   read across a whole file have bounded repeats. `tests/test_slow_input.py` runs the worst cases we know of.
+   read across a whole file have bounded repeats, and multi-line patterns never let a line's leading space run across line breaks.
+   Files that aren't valid, or that hold the wrong types, are skipped rather than trusted, and a failure reading one kind of route
+   can't lose the others. `tests/test_slow_input.py` runs the worst cases we know of against every file LadPock parses.
 
 14. **The MCP server and the git hook only read.** `ladpock mcp` talks JSON-RPC over stdin/stdout to the client
    that started it. Its tools scan, list findings and build fix prompts; none edits code or settings, and results

@@ -1,3 +1,3 @@
 """LadPock: a free, local security checker for vibe-coded projects."""
 
-__version__ = "0.15.0"
+__version__ = "0.16.0"

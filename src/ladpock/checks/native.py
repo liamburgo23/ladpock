@@ -1,4 +1,4 @@
-# ladpock-ignore-file: LP-NATIVE-001, LP-NATIVE-002, LP-NATIVE-003, LP-NATIVE-004, LP-SHELL-001, LP-SHELL-002, LP-SHELL-003, LP-SHELL-004, LP-SHELL-005, LP-SOL-001, LP-SOL-002, LP-SOL-003 (this file defines those patterns)
+# ladpock-ignore-file: LP-NATIVE-001, LP-NATIVE-002, LP-NATIVE-003, LP-NATIVE-004, LP-SHELL-001, LP-SHELL-002, LP-SHELL-003, LP-SHELL-004, LP-SHELL-005, LP-SOL-001, LP-SOL-002, LP-SOL-003, LP-IOT-001, LP-IOT-002 (this file defines those patterns)
 """Software that isn't a web app: C and C++, shell and PowerShell scripts, Solidity
 contracts, and things any desktop or command-line program can get wrong.
 """
@@ -8,7 +8,7 @@ from __future__ import annotations
 import re
 from typing import Iterator
 
-from ..files import JS_EXT, PY_EXT
+from ..files import JS_EXT, PY_EXT, as_dict, as_list, load_json
 from ..jsparse import capped, line_of, match_bracket, strip_comments
 from ..models import Finding, Severity
 from .base import CheckInfo, ScanContext, check, grep, near, regex_check
@@ -145,6 +145,86 @@ regex_check(
     fix='Use bind parameters: sqlx::query("SELECT ... WHERE id = $1").bind(id).',
     pattern=r"(?:\bquery(?:_as|_scalar)?(?:::<[^>]*>)?|\.execute|\.query_row|\.prepare|\.query_map|\.fetch_one|\.fetch_all)\(\s*&?format!\(",
     exts=RUST, cwe=("CWE-89",),
+)
+
+# ---------- browser extensions ----------
+
+ALL_SITES = {"<all_urls>", "*://*/*", "http://*/*", "https://*/*", "*://*", "*"}
+
+
+def _manifests(ctx: ScanContext) -> Iterator[tuple[str, dict]]:
+    for rel in ctx.index.iter(names={"manifest.json"}):
+        if not rel.endswith("manifest.json"):
+            continue
+        data = load_json(ctx.index.read(rel))
+        if isinstance(data, dict) and "manifest_version" in data:
+            yield rel, data
+
+
+def _line_of_text(ctx: ScanContext, rel: str, text: str) -> int | None:
+    for i, line in enumerate(ctx.index.lines(rel), 1):
+        if text in line:
+            return i
+    return None
+
+
+@check(
+    "LP-EXT-001", "Extension can read every website", "authz", Severity.MEDIUM,
+    why="This extension asks for access to all sites, so it can read and change everything people do in their browser: email, banking, "
+        "passwords as they're typed. A bug or a compromised update then affects all of it, and store reviewers look harder at this.",
+    fix="List only the sites it needs, or use activeTab so it gets access only when someone clicks it.",
+    cwe=("CWE-250",),
+)
+def extension_permissions(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
+    for rel, data in _manifests(ctx):
+        hosts = [*as_list(data.get("permissions")), *as_list(data.get("host_permissions"))]
+        for script in as_list(data.get("content_scripts")):
+            hosts.extend(as_list(as_dict(script).get("matches")))
+        broad = sorted({h for h in hosts if isinstance(h, str) and h in ALL_SITES})
+        if broad:
+            yield ctx.finding(info, rel, _line_of_text(ctx, rel, broad[0]), f"{data.get('name', 'extension')}: {', '.join(broad)}", confidence="high")
+
+
+@check(
+    "LP-EXT-002", "Extension settings let websites or remote code in", "authz", Severity.HIGH,
+    why="These settings let ordinary web pages talk to the extension or reach its files, or allow code that isn't in the package to run. "
+        "That turns any website into a way to reach what the extension can do.",
+    fix="Limit externally_connectable and web_accessible_resources to your own sites, and keep 'unsafe-eval' and remote scripts out of the "
+        "content security policy.",
+    cwe=("CWE-284", "CWE-829"),
+)
+def extension_settings(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
+    for rel, data in _manifests(ctx):
+        connectable = as_list(as_dict(data.get("externally_connectable")).get("matches"))
+        if any(m in ALL_SITES or re.match(r"^\*://\*\.[a-z]+/", m) for m in connectable if isinstance(m, str)):
+            yield ctx.finding(info, rel, _line_of_text(ctx, rel, "externally_connectable"), "externally_connectable: any site", confidence="high")
+        policy = data.get("content_security_policy") or ""
+        policy = " ".join(str(v) for v in policy.values()) if isinstance(policy, dict) else str(policy)
+        if re.search(r"'unsafe-eval'|script-src[^;]*\bhttps?:", policy):
+            yield ctx.finding(info, rel, _line_of_text(ctx, rel, "content_security_policy"), f"content_security_policy: {policy[:120]}", confidence="high")
+        for entry in as_list(data.get("web_accessible_resources")):
+            if isinstance(entry, dict) and "*" in str(entry.get("resources")) and any(m in ALL_SITES for m in as_list(entry.get("matches")) if isinstance(m, str)):
+                yield ctx.finding(info, rel, _line_of_text(ctx, rel, "web_accessible_resources"), "web_accessible_resources: every file, to any site",
+                                  severity=Severity.MEDIUM, confidence="high")
+
+
+# ---------- Arduino, ESP32 and other small devices ----------
+
+regex_check(
+    "LP-IOT-001", "Wi-Fi password or device login in a sketch", "secrets", Severity.MEDIUM,
+    why="This is stored in plain text in your code and in the device's memory. Anyone with the repository, or physical access to the device, "
+        "can read it and get onto your network or your broker.",
+    fix="Put it in a secrets header that's in .gitignore, or set it up on the device through a provisioning step such as WiFiManager.",
+    pattern=r"""\bWiFi\.begin\(\s*"[^"]+"\s*,\s*"[^"]{4,}"|\bconst\s+char\s*\*?\s*\w*(?:password|passwd|pass|pwd|psk|secret|token)\w*(?:\[\s*\])?\s*=\s*"[^"]{4,}"|#define\s+\w*(?:WIFI_PASS\w*|PASSWORD|API_KEY|MQTT_PASS\w*)\s+"[^"]{4,}\"""",
+    exts=frozenset({".ino", ".cpp", ".h"}), cwe=("CWE-798",), flags=re.I, unless=r"(?i)your_?|yourpass|changeme|example|xxxx|<",
+)
+regex_check(
+    "LP-IOT-002", "Device connects without encryption or checks", "config", Severity.MEDIUM,
+    why="With certificate checks off, or plain MQTT on port 1883, anyone on the network path can read or change what the device sends and "
+        "receives, and may be able to control it.",
+    fix="Use TLS (MQTT on 8883, WiFiClientSecure) and load your server's CA certificate rather than turning checks off.",
+    pattern=r"\.setInsecure\(\)|\b\w*(?:mqtt|client)\w*\.setServer\([^)\n]*,\s*1883\s*\)",
+    exts=frozenset({".ino", ".cpp", ".h"}), cwe=("CWE-295", "CWE-319"), flags=re.I,
 )
 
 # ---------- Solidity ----------

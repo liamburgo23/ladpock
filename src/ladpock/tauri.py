@@ -121,7 +121,7 @@ def load_configs(index: FileIndex) -> tuple[list[TauriConfig], list[str]]:
         text = index.read(rel) or ""
         try:
             data = tomllib.loads(text) if rel.endswith(".toml") else json.loads(text)
-        except (ValueError, tomllib.TOMLDecodeError):
+        except (ValueError, tomllib.TOMLDecodeError, RecursionError):
             warnings.append(f"Couldn't read {rel} (JSON5 and invalid JSON aren't supported yet)")
             continue
         if not isinstance(data, dict):
@@ -139,7 +139,7 @@ def load_capabilities(index: FileIndex, configs: list[TauriConfig]) -> list[Capa
         text = index.read(rel) or ""
         try:
             data = tomllib.loads(text) if rel.endswith(".toml") else json.loads(text)
-        except (ValueError, tomllib.TOMLDecodeError):
+        except (ValueError, tomllib.TOMLDecodeError, RecursionError):
             continue
         items = data if isinstance(data, list) else data.get("capabilities", [data]) if isinstance(data, dict) else []
         caps.extend(Capability(rel, item, text) for item in items if isinstance(item, dict))
@@ -163,7 +163,8 @@ def permission_paths(perm) -> list[str]:
     if not isinstance(perm, dict):
         return []
     out = []
-    for entry in perm.get("allow") or []:
+    allowed = perm.get("allow")
+    for entry in allowed if isinstance(allowed, list) else []:
         if isinstance(entry, dict) and isinstance(entry.get("path"), str):
             out.append(entry["path"])
         elif isinstance(entry, str):

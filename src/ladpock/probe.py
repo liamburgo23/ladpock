@@ -606,7 +606,7 @@ def _answered(resp: Response | None) -> bool:
         return not SIGN_IN_FORM.search(resp.body)
     try:
         data = json.loads(resp.body)
-    except ValueError:
+    except (ValueError, RecursionError):
         return True
     if isinstance(data, dict):
         return any(data.values()) and not set(data) <= ERROR_KEYS
@@ -633,7 +633,7 @@ def _json_items(body: str) -> list[dict]:
     """The records in a JSON list answer: a top-level list, or the first list inside an object, one level down at most."""
     try:
         data = json.loads(body)
-    except ValueError:
+    except (ValueError, RecursionError):
         return []
     for _ in range(3):
         if isinstance(data, dict):
@@ -667,7 +667,7 @@ def _object_of(body: str) -> list[dict]:
     """The object in a single-record answer, and any object directly inside it ({"user": {...}})."""
     try:
         data = json.loads(body)
-    except ValueError:
+    except (ValueError, RecursionError):
         return []
     if isinstance(data, list) and len(data) == 1:
         data = data[0]

@@ -7,7 +7,7 @@ import subprocess
 import unittest
 from pathlib import Path
 
-from helpers import isolated_home, materialize
+from helpers import FAKES, isolated_home, materialize
 
 from ladpock.checks import REGISTRY, ScanContext, run_all
 from ladpock.db import DB
@@ -63,6 +63,7 @@ EXPECTED_FUNCTIONS = {
 }
 EXPECTED_NATIVE = {
     "LP-NATIVE-001", "LP-NATIVE-002", "LP-NATIVE-003", "LP-NATIVE-004", "LP-NATIVE-005", "LP-SHELL-001", "LP-SHELL-002", "LP-SHELL-003",
+    "LP-AI-006", "LP-AI-007", "LP-AI-008", "LP-AI-009", "LP-INJ-014", "LP-EXT-001", "LP-EXT-002", "LP-IOT-001", "LP-IOT-002",
     "LP-SEC-010", "LP-SHELL-004", "LP-SHELL-005", "LP-RUST-002", "LP-RUST-003", "LP-SOL-001", "LP-SOL-002", "LP-SOL-003", "LP-SOL-004", "LP-SOL-005", "LP-SOL-006",
 }
 # Produced only with network access or git, covered by their own tests.
@@ -277,6 +278,12 @@ class NativeAndMoreFrameworks(unittest.TestCase):
     def test_checks_fire(self):
         findings, _ = self.load("vuln-native")
         self.assertEqual(sorted(EXPECTED_NATIVE - {f.check_id for f in findings}), [])
+
+    def test_keys_in_notebooks_are_found(self):
+        findings, _ = self.load("vuln-native")
+        found = [f for f in findings if f.check_id == "LP-SEC-003" and f.file == "notebooks/analysis.ipynb"]
+        self.assertTrue(found)
+        self.assertNotIn(FAKES["{{FAKE_OPENAI_KEY}}"], found[0].snippet)  # masked
 
     def test_credential_files(self):
         findings, _ = self.load("vuln-native")

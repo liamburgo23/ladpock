@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import json
 import re
 import tomllib
 
-from .files import FileIndex, basename
+from .files import FileIndex, as_dict, as_list, basename, json_object
 
 LABELS = {
     "nextjs": "Next.js", "react": "React", "vite": "Vite", "express": "Express", "fastify": "Fastify",
@@ -22,7 +21,8 @@ LABELS = {
     "aspnet": "ASP.NET", "go-web": "Go web server", "trpc": "tRPC", "convex": "Convex", "graphql": "GraphQL",
     "vercel": "Vercel Functions", "netlify": "Netlify Functions", "cloudflare": "Cloudflare Workers", "aws-lambda": "AWS Lambda",
     "rust-web": "Rust web server", "elysia": "Elysia", "hapi": "Hapi", "sinatra": "Sinatra", "symfony": "Symfony", "ktor": "Ktor", "jaxrs": "JAX-RS/Micronaut",
-    "c-cpp": "C/C++", "solidity": "Solidity", "shell": "Shell scripts",
+    "c-cpp": "C/C++", "solidity": "Solidity", "shell": "Shell scripts", "browser-extension": "Browser extension", "notebook": "Jupyter notebooks",
+    "arduino": "Arduino", "mcp": "MCP server", "gradio": "Gradio", "streamlit": "Streamlit",
 }
 
 # Stacks with dedicated, framework-aware checks. Everything else still gets the
@@ -31,7 +31,8 @@ DEEP_PACKS = {"nextjs", "react", "supabase", "firebase", "stripe", "github-actio
               "hono", "koa", "nestjs", "fastapi", "flask", "django", "docker", "kubernetes", "terraform", "electron",
               "react-native", "expo", "android", "ios", "flutter", "sveltekit", "remix", "nuxt", "astro", "spring", "rails",
               "laravel", "aspnet", "go-web", "trpc", "convex", "graphql", "vercel", "netlify", "cloudflare", "aws-lambda", "openai",
-              "anthropic", "ai-sdk", "nextauth", "vite", "rust-web", "elysia", "hapi", "sinatra", "symfony", "ktor", "jaxrs", "c-cpp", "solidity", "shell"}
+              "anthropic", "ai-sdk", "nextauth", "vite", "rust-web", "elysia", "hapi", "sinatra", "symfony", "ktor", "jaxrs", "c-cpp", "solidity", "shell", "browser-extension", "notebook",
+              "arduino", "mcp", "gradio", "streamlit"}
 
 _NPM = {
     "next": "nextjs", "react": "react", "vite": "vite", "express": "express", "fastify": "fastify",
@@ -48,12 +49,12 @@ _NPM = {
     "graphql-yoga": "graphql", "type-graphql": "graphql", "@nestjs/graphql": "graphql", "mercurius": "graphql",
     "wrangler": "cloudflare", "@cloudflare/workers-types": "cloudflare", "@netlify/functions": "netlify", "@vercel/node": "vercel",
     "serverless": "aws-lambda", "aws-lambda": "aws-lambda", "firebase-functions": "firebase", "elysia": "elysia", "@hapi/hapi": "hapi",
-    "hardhat": "solidity", "@openzeppelin/contracts": "solidity",
+    "hardhat": "solidity", "@openzeppelin/contracts": "solidity", "@modelcontextprotocol/sdk": "mcp",
 }
 _PY = {
     "fastapi": "fastapi", "flask": "flask", "django": "django", "supabase": "supabase", "stripe": "stripe",
     "openai": "openai", "anthropic": "anthropic", "firebase-admin": "firebase", "djangorestframework": "django",
-    "quart": "flask", "starlette": "fastapi",
+    "quart": "flask", "starlette": "fastapi", "gradio": "gradio", "streamlit": "streamlit", "mcp": "mcp", "fastmcp": "mcp",
 }
 _PY_NAME = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 
@@ -65,11 +66,10 @@ def _python_names(index: FileIndex, rel: str) -> set[str]:
     if name == "pyproject.toml":
         try:
             data = tomllib.loads(text)
-        except tomllib.TOMLDecodeError:
+        except (tomllib.TOMLDecodeError, RecursionError):
             return names
-        deps = list(data.get("project", {}).get("dependencies", []))
-        poetry = data.get("tool", {}).get("poetry", {}).get("dependencies", {})
-        deps += list(poetry) if isinstance(poetry, dict) else []
+        deps = list(as_list(as_dict(data.get("project")).get("dependencies")))
+        deps += list(as_dict(as_dict(as_dict(data.get("tool")).get("poetry")).get("dependencies")))
         for dep in deps:
             m = _PY_NAME.match(str(dep))
             if m:
@@ -95,12 +95,9 @@ def detect(index: FileIndex) -> list[str]:
         name = basename(rel)
         if name == "package.json":
             add("node")
-            try:
-                data = json.loads(index.read(rel) or "{}")
-            except json.JSONDecodeError:
-                continue
+            data = json_object(index.read(rel))
             for section in ("dependencies", "devDependencies", "peerDependencies"):
-                for dep in (data.get(section) or {}):
+                for dep in as_dict(data.get(section)):
                     if dep in _NPM:
                         add(_NPM[dep])
         elif name in ("pyproject.toml", "Pipfile") or (name.startswith("requirements") and name.endswith(".txt")):
@@ -149,9 +146,9 @@ def detect(index: FileIndex) -> list[str]:
                 add("symfony")
         elif name == "Gemfile":
             add("ruby")
-            if re.search(r"""(?m)^\s*gem\s+['"]rails['"]""", index.read(rel) or ""):
+            if re.search(r"""(?m)^[ \t]*gem\s+['"]rails['"]""", index.read(rel) or ""):
                 add("rails")
-            if re.search(r"""(?m)^\s*gem\s+['"]sinatra['"]""", index.read(rel) or ""):
+            if re.search(r"""(?m)^[ \t]*gem\s+['"]sinatra['"]""", index.read(rel) or ""):
                 add("sinatra")
         elif name in ("pom.xml", "build.gradle", "build.gradle.kts"):
             add("java")
@@ -173,14 +170,20 @@ def detect(index: FileIndex) -> list[str]:
             add("tauri")
         elif name == "Cargo.toml":
             add("rust")
-            if re.search(r"(?m)^\s*tauri\s*=", index.read(rel) or ""):
+            if re.search(r"(?m)^[ \t]*tauri\s*=", index.read(rel) or ""):
                 add("tauri")
-            if re.search(r"(?m)^\s*(?:axum|actix-web|rocket)\s*=", index.read(rel) or ""):
+            if re.search(r"(?m)^[ \t]*(?:axum|actix-web|rocket)\s*=", index.read(rel) or ""):
                 add("rust-web")
         if rel.startswith("supabase/") or "/supabase/migrations/" in rel:
             add("supabase")
         if rel.startswith("convex/") and name.endswith((".ts", ".js")):
             add("convex")
+        if name == "manifest.json" and '"manifest_version"' in (index.read(rel) or ""):
+            add("browser-extension")
+        if name.endswith(".ipynb"):
+            add("notebook")
+        elif name.endswith(".ino"):
+            add("arduino")
         if name.endswith((".c", ".cc", ".cpp", ".cxx")):
             add("c-cpp")
         elif name.endswith(".sol") or name in ("foundry.toml",) or name.startswith("hardhat.config."):

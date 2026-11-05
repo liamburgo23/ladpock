@@ -104,7 +104,8 @@ def inline_ignored(ctx: "ScanContext", finding: Finding) -> bool:
     return False
 
 
-COMMENT_LINE = re.compile(r"^\s*(//|#|\*|/\*|<!--|--)")
+# A # starts a comment in Python and shell, but in C and C++ it can start real code like #define.
+COMMENT_LINE = re.compile(r"^\s*(//|#(?!\s*(?:define|include|if|ifdef|ifndef|else|elif|endif|undef|pragma)\b)|\*|/\*|<!--|--)")
 MAX_LINE = 2000  # longer lines are almost always minified or generated
 
 

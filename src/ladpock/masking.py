@@ -115,7 +115,7 @@ def jwt_claims(token: str) -> dict | None:
         payload = token.split(".")[1]
         payload += "=" * (-len(payload) % 4)
         claims = json.loads(base64.urlsafe_b64decode(payload))
-    except (IndexError, ValueError, UnicodeDecodeError):
+    except (IndexError, ValueError, UnicodeDecodeError, RecursionError):
         return None
     return claims if isinstance(claims, dict) else None
 

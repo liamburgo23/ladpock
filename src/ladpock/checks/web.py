@@ -511,7 +511,7 @@ def csrf_disabled(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
             continue
         text = ctx.index.read(rel) or ""
         match = re.search(r"^MIDDLEWARE\s*=\s*\[([^\]]*)\]", text, re.M)
-        if match and "CsrfViewMiddleware" not in re.sub(r"(?m)^\s*#.*$", "", match.group(1)):
+        if match and "CsrfViewMiddleware" not in re.sub(r"(?m)^[ \t]*#.*$", "", match.group(1)):
             lineno = text.count("\n", 0, match.start()) + 1
             yield ctx.finding(info, rel, lineno, ctx.index.lines(rel)[lineno - 1],
                               message="Django's CsrfViewMiddleware isn't in MIDDLEWARE, so no view is protected. " + info.why)

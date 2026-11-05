@@ -8,7 +8,7 @@ import re
 import tomllib
 from typing import Iterator
 
-from ..files import LOCKFILES, basename, is_ai_instruction_file
+from ..files import LOCKFILES, as_dict, as_list, basename, is_ai_instruction_file, json_object, load_json
 from ..jsparse import strip_comments
 from ..models import Finding, Severity
 from .base import CheckInfo, ScanContext, check, describe
@@ -30,10 +30,7 @@ PY_RUNNERS = {"uvx"}
 
 
 def _load_jsonc(text: str) -> dict | None:
-    try:
-        data = json.loads(re.sub(r",(\s*[}\]])", r"\1", strip_comments(text)))
-    except ValueError:
-        return None
+    data = load_json(re.sub(r",(\s*[}\]])", r"\1", strip_comments(text)))
     return data if isinstance(data, dict) else None
 
 
@@ -109,10 +106,7 @@ def install_scripts(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
     for rel in ctx.index.iter(names={"package.json"}):
         if basename(rel) != "package.json":
             continue
-        try:
-            scripts = json.loads(ctx.index.read(rel) or "{}").get("scripts") or {}
-        except (ValueError, AttributeError):
-            continue
+        scripts = as_dict(json_object(ctx.index.read(rel)).get("scripts"))
         for name in INSTALL_SCRIPTS:
             command = scripts.get(name)
             if isinstance(command, str) and RUNS_DOWNLOADS.search(command):
@@ -121,9 +115,9 @@ def install_scripts(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
 
 NPM_UNUSUAL = re.compile(r"^(?:https?:|git\+|git:|ssh:|github:|gitlab:|bitbucket:|[\w.-]+/[\w.-]+(?:#.*)?$)")
 LOCK_RESOLVED = re.compile(r'"resolved"\s*:\s*"(http://[^"]+|git\+[^"]+)"')
-PY_SOURCES = re.compile(r"(?m)^\s*(--extra-index-url\s+\S+|--index-url\s+http://\S+|-i\s+http://\S+|--trusted-host\s+\S+|\S*\bgit\+http://\S+|\S+\s*@\s*http://\S+|http://\S+\.(?:whl|tar\.gz|zip)\b)")
-NPMRC_RULES = re.compile(r"(?m)^\s*(?:(?:@[\w-]+:)?registry\s*=\s*http://\S+|strict-ssl\s*=\s*false)\s*$")
-OTHER_SOURCES = re.compile(r"""(?m)^\s*source\s+['"]http://|['"]secure-http['"]\s*:\s*false""")
+PY_SOURCES = re.compile(r"(?m)^[ \t]*(--extra-index-url\s+\S+|--index-url\s+http://\S+|-i\s+http://\S+|--trusted-host\s+\S+|\S*\bgit\+http://\S+|\S+\s*@\s*http://\S+|http://\S+\.(?:whl|tar\.gz|zip)\b)")
+NPMRC_RULES = re.compile(r"(?m)^[ \t]*(?:(?:@[\w-]+:)?registry\s*=\s*http://\S+|strict-ssl\s*=\s*false)\s*$")
+OTHER_SOURCES = re.compile(r"""(?m)^[ \t]*source\s+['"]http://|['"]secure-http['"]\s*:\s*false""")
 
 
 @check(
@@ -139,12 +133,9 @@ def unusual_sources(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
     for rel in ctx.index.iter(include_lockfiles=True):
         name = basename(rel)
         if name == "package.json":
-            try:
-                data = json.loads(ctx.index.read(rel) or "{}")
-            except ValueError:
-                continue
+            data = json_object(ctx.index.read(rel))
             for section in ("dependencies", "devDependencies", "optionalDependencies"):
-                for package, version in (data.get(section) or {}).items():
+                for package, version in as_dict(data.get(section)).items():
                     if isinstance(version, str) and NPM_UNUSUAL.match(version):
                         insecure = version.startswith(("http:", "git:", "git+http:"))
                         yield ctx.finding(info, rel, _line_with(ctx, rel, f'"{package}"'), f"{package}: {version}",
@@ -173,20 +164,17 @@ def any_version(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
     for rel in ctx.index.iter(names={"package.json"}):
         if basename(rel) != "package.json":
             continue
-        try:
-            data = json.loads(ctx.index.read(rel) or "{}")
-        except ValueError:
-            continue
+        data = json_object(ctx.index.read(rel))
         for section in ("dependencies", "devDependencies"):
-            for package, version in (data.get(section) or {}).items():
-                if version in ("*", "latest", "", "x"):
+            for package, version in as_dict(data.get(section)).items():
+                if isinstance(version, str) and version in ("*", "latest", "", "x"):
                     yield ctx.finding(info, rel, _line_with(ctx, rel, f'"{package}"'), f"{package}: {version or 'no version'}", confidence="high")
 
 
 def _unpinned_runner(command: str, args: list) -> str | None:
     """The package an MCP server's command runs, if it isn't at a fixed version."""
     name = basename(command.replace("\\", "/")).removesuffix(".cmd").removesuffix(".exe")
-    words = [str(a) for a in args]
+    words = [str(a) for a in as_list(args)]
     if name in NPM_RUNNERS:
         package = next((w for w in words if not w.startswith("-")), None)
         if package and not re.search(r".@\d", package):

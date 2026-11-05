@@ -1,0 +1,5 @@
+services:
+  ollama:
+    image: ollama/ollama:0.4.0
+    environment:
+      - OLLAMA_HOST=127.0.0.1

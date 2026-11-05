@@ -3,6 +3,23 @@
 All notable changes to LadPock. Versions follow [semantic versioning](https://semver.org/); while LadPock is below
 1.0, minor versions can include changes to checks and grades.
 
+## [0.16.0] - 2026-11-05
+
+### Added
+- Jupyter notebooks are now read, so keys in cells and outputs are found.
+- Checks for AI tools open to the network: Ollama on `0.0.0.0`, Gradio `share=True` with no login, Open WebUI with its login off, notebooks with no token.
+- Checks for MCP servers you write: tools that run commands or touch files the model chose, and HTTP transports with no login.
+- Checks for browser extensions: access to every site, settings that let websites or remote code in. Also a check, for any web code, for messages
+  accepted from any site.
+- Checks for Arduino and ESP32 sketches: Wi-Fi passwords and device logins in the code, turned-off certificate checks, plain MQTT.
+- `unsafe_allow_html=True` in Streamlit is now reported.
+
+### Fixed
+- A config file holding the wrong types, such as a `package.json` with `{"dependencies": 5}`, or very deep nesting, could crash a whole scan. Odd files are now skipped, and
+  a failure reading one framework's routes no longer loses the others.
+- A file with very many blank lines could hang a scan.
+- Lines starting with `#` were treated as comments in C and C++ too, so `#define` lines were never checked.
+
 ## [0.15.0] - 2026-11-05
 
 ### Added
@@ -210,6 +227,7 @@ All notable changes to LadPock. Versions follow [semantic versioning](https://se
   EPSS with "new since you last looked"; hallucinated-package detection; grades; fix prompts; JSON and SARIF
   output; and support for Gitleaks, OSV-Scanner and Opengrep.
 
+[0.16.0]: https://github.com/liamburgo23/ladpock/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/liamburgo23/ladpock/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/liamburgo23/ladpock/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/liamburgo23/ladpock/compare/v0.12.0...v0.13.0

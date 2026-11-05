@@ -10,6 +10,7 @@ Generated with `ladpock checks --markdown`.
 | `LP-AI-001` | AI API key used from the browser | high | all projects |
 | `LP-DOCKER-002` | Secret baked into the container image | high | all projects |
 | `LP-INFRA-004` | Kubernetes Secret committed with its values | high | all projects |
+| `LP-IOT-001` | Wi-Fi password or device login in a sketch | medium | all projects |
 | `LP-LIVE-004` | Private file served to anyone | critical | all projects |
 | `LP-LOG-001` | Password or token written to the logs | medium | all projects |
 | `LP-SEC-001` | Supabase admin key exposed to the browser | critical | all projects |
@@ -54,6 +55,7 @@ Generated with `ladpock checks --markdown`.
 
 | ID | Check | Default severity | Applies to |
 |---|---|---|---|
+| `LP-AI-009` | MCP server on the network with no login | high | mcp |
 | `LP-AUTHZ-001` | Endpoint changes data without checking who is calling | high | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet, trpc, convex, graphql, firebase, supabase, vercel, netlify, cloudflare, aws-lambda, rust-web, elysia, hapi, sinatra, symfony, ktor, jaxrs |
 | `LP-AUTHZ-002` | Record fetched by ID without checking it belongs to the user | high | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet, trpc, convex, graphql, firebase, supabase, vercel, netlify, cloudflare, aws-lambda, rust-web, elysia, hapi, sinatra, symfony, ktor, jaxrs |
 | `LP-AUTHZ-003` | Authentication only enforced in middleware | medium | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet, trpc, convex, graphql, firebase, supabase, vercel, netlify, cloudflare, aws-lambda, rust-web, elysia, hapi, sinatra, symfony, ktor, jaxrs |
@@ -66,6 +68,8 @@ Generated with `ladpock checks --markdown`.
 | `LP-AUTHZ-010` | User ID taken from the request instead of the session | high | all projects |
 | `LP-AUTHZ-011` | Login can be switched off with a setting | high | all projects |
 | `LP-ELEC-004` | Whole IPC channel exposed to the web page | high | electron |
+| `LP-EXT-001` | Extension can read every website | medium | all projects |
+| `LP-EXT-002` | Extension settings let websites or remote code in | high | all projects |
 | `LP-LIVE-001` | Endpoint answered without logging in | high | all projects |
 | `LP-LIVE-008` | One user can read another user's data | critical | all projects |
 | `LP-LIVE-009` | Ordinary account reached an admin endpoint | high | all projects |
@@ -103,6 +107,7 @@ Generated with `ladpock checks --markdown`.
 | `LP-ABUSE-012` | Anyone can send email or texts to any address | medium | all projects |
 | `LP-ABUSE-013` | Endpoint returns a whole table | low | all projects |
 | `LP-AI-003` | The caller chooses the AI model or token limit | medium | all projects |
+| `LP-AI-006` | AI tool or notebook open to the network | high | all projects |
 | `LP-API-002` | GraphQL has no query depth or cost limit | low | all projects |
 | `LP-API-003` | Debug, test or seed endpoint left in the app | high | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet, trpc, convex, graphql, firebase, supabase, vercel, netlify, cloudflare, aws-lambda, rust-web, elysia, hapi, sinatra, symfony, ktor, jaxrs |
 | `LP-API-004` | Scheduled-job endpoint anyone can trigger | medium | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet, trpc, convex, graphql, firebase, supabase, vercel, netlify, cloudflare, aws-lambda, rust-web, elysia, hapi, sinatra, symfony, ktor, jaxrs |
@@ -116,6 +121,8 @@ Generated with `ladpock checks --markdown`.
 | `LP-AI-002` | AI reply run as code or as a database query | high | all projects |
 | `LP-AI-004` | User input written into the AI's system prompt | medium | all projects |
 | `LP-AI-005` | AI agent can run code or shell commands | high | all projects |
+| `LP-AI-007` | HTML from a user or a model shown without escaping | medium | all projects |
+| `LP-AI-008` | MCP tool runs commands or touches files the model chose | high | mcp |
 | `LP-ELEC-005` | Link opened in the system without checking the address | medium | electron |
 | `LP-ELEC-009` | IPC handler uses page input for files or programs | medium | electron |
 | `LP-INJ-001` | HTML injected without sanitising | medium | all projects |
@@ -131,6 +138,7 @@ Generated with `ladpock checks --markdown`.
 | `LP-INJ-011` | Object properties set from request data (prototype pollution) | medium | all projects |
 | `LP-INJ-012` | Template built from user input (server-side template injection) | high | all projects |
 | `LP-INJ-013` | Archive unpacked without checking paths inside it | medium | all projects |
+| `LP-INJ-014` | Messages accepted from any site | medium | all projects |
 | `LP-LIVE-011` | Page puts request input back as raw HTML | high | all projects |
 | `LP-LIVE-012` | A stray quote breaks a database query | critical | all projects |
 | `LP-LIVE-013` | App redirects to any website | medium | all projects |
@@ -188,6 +196,7 @@ Generated with `ladpock checks --markdown`.
 | `LP-INFRA-001` | Container can take over the host | high | all projects |
 | `LP-INFRA-002` | Database or admin port open on every network interface | medium | all projects |
 | `LP-INFRA-006` | Web server settings expose files or weak encryption | high | all projects |
+| `LP-IOT-002` | Device connects without encryption or checks | medium | all projects |
 | `LP-LIVE-002` | Security headers missing from responses | low | all projects |
 | `LP-LIVE-003` | App lets any website read its responses (CORS) | medium | all projects |
 | `LP-LIVE-006` | Error page shows a stack trace | medium | all projects |

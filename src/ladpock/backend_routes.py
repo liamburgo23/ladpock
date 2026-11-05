@@ -301,7 +301,7 @@ RAILS = Patterns(
                      r"\bpolicy_scope\b|\bload_and_authorize_resource\b|\bcan\?|\bauthorize_resource\b"),
     validation=re.compile(r"\.permit\(|\b\w+_params\b"),
     reads=re.compile(r"\bparams\b|\b\w+_params\b"),
-    rate=re.compile(r"(?m)^\s*rate_limit\s+to:|\bRack::Attack\b"),
+    rate=re.compile(r"(?m)^[ \t]*rate_limit\s+to:|\bRack::Attack\b"),
 )
 RAILS_AUTH_FILTER = re.compile(r"(?i)authenticate|require_(?:login|user|auth)|logged_in|signed_in|verify_user|check_auth|ensure_auth")
 RAILS_RESOURCE_ACTIONS = {"index": ("GET", ""), "create": ("POST", ""), "show": ("GET", "/:id"), "update": ("PATCH", "/:id"),
@@ -395,7 +395,7 @@ def _ruby_def(code: str, name: str) -> str:
 def _rails_filters(code: str, action: str) -> tuple[list[str], list[str]]:
     """(before_action names that apply to this action, skip_before_action names that apply)."""
     applied, skipped = [], []
-    for match in capped(re.finditer(r"(?m)^\s*(skip_)?before_action\s+(.*)$", code)):
+    for match in capped(re.finditer(r"(?m)^[ \t]*(skip_)?before_action\s+(.*)$", code)):
         rest = match.group(2)
         only, exclude = _rails_list(rest, "only"), _rails_list(rest, "except")
         if (only is not None and action not in only) or (exclude is not None and action in exclude):

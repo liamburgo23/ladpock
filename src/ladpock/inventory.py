@@ -11,7 +11,7 @@ import re
 import tomllib
 from typing import Callable
 
-from .files import FileIndex, basename
+from .files import FileIndex, as_dict, basename, json_object
 from .models import Component
 
 _YARN_HEADER = re.compile(r'^"?((?:@[^/@"\s]+/)?[^@"\s,]+)@')
@@ -355,10 +355,12 @@ def collect(index: FileIndex) -> tuple[list[Component], list[str]]:
             continue
         try:
             components = parser(text, rel)
-        except (ValueError, tomllib.TOMLDecodeError, AttributeError, TypeError) as exc:
-            warnings.append(f"Couldn't read {rel}: {exc}")
+        except (ValueError, tomllib.TOMLDecodeError, AttributeError, TypeError, KeyError, IndexError, RecursionError) as exc:
+            warnings.append(f"Couldn't read {rel}: {type(exc).__name__}: {str(exc)[:120]}")
             continue
         for comp in components:
+            if not (isinstance(comp.name, str) and isinstance(comp.version, str)):
+                continue  # a lockfile can hold anything
             if comp.version and comp not in seen:
                 seen.add(comp)
                 out.append(comp)
@@ -373,12 +375,9 @@ def direct_dependencies(index: FileIndex) -> list[tuple[str, str, str]]:
             continue
         name = basename(rel)
         if name == "package.json":
-            try:
-                data = json.loads(index.read(rel) or "{}")
-            except json.JSONDecodeError:
-                continue
+            data = json_object(index.read(rel))
             for section in ("dependencies", "devDependencies"):
-                for dep, spec in (data.get(section) or {}).items():
+                for dep, spec in as_dict(data.get(section)).items():
                     spec = str(spec)
                     if spec.startswith(("workspace:", "file:", "link:", "git", "http", "github:", "portal:")):
                         continue
@@ -387,7 +386,7 @@ def direct_dependencies(index: FileIndex) -> list[tuple[str, str, str]]:
                     out.append(("npm", dep, rel))
         elif name.startswith("requirements") and name.endswith(".txt"):
             text = index.read(rel) or ""
-            if re.search(r"(?m)^\s*--(?:extra-)?index-url", text):
+            if re.search(r"(?m)^[ \t]*--(?:extra-)?index-url", text):
                 continue  # private index: the public registry isn't authoritative
             for comp in parse_requirements(text, rel):
                 out.append(("PyPI", comp.name, rel))

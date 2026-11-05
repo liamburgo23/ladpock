@@ -30,7 +30,7 @@ HANDLER = re.compile(
     r"export\s+const\s*\{([^}]*)\}\s*=|export\s*\{([^}]*)\}"
 )
 ACTION = re.compile(r"export\s+(?:default\s+)?(?:async\s+function\s+(\w+)|const\s+(\w+)\s*=\s*async)")
-USE_SERVER = re.compile(r"""^\s*['"]use server['"]""", re.M)
+USE_SERVER = re.compile(r"""^[ \t]*['"]use server['"]""", re.M)
 
 AUTH = re.compile(
     r"\b(?:auth|getServerSession|getSession|currentUser|getUser|getAuth|requireAuth|requireUser|requireSession|"
@@ -235,7 +235,7 @@ def _assess(route: Route, body: str, module: str, auth_names: set[str], mw: Midd
     return route
 
 
-def analyze(index: FileIndex) -> list[Route]:
+def next_routes(index: FileIndex) -> list[Route]:
     mw = _middleware(index)
     routes: list[Route] = []
     for rel in index.sources({".ts", ".js", ".tsx", ".jsx", ".mjs"}):
@@ -284,6 +284,10 @@ def analyze(index: FileIndex) -> list[Route]:
                 route = Route("ACTION", f"action {name}()", rel, line_of(code, match.start()), "action")
                 route = _assess(route, code[match.start():end], code, auth_names, Middleware())
                 routes.append(route)
+    return routes
+
+
+def analyze(index: FileIndex) -> list[Route]:
     from .backend_routes import analyze_backends
     from .config import apply_to_routes
     from .fullstack_routes import analyze_fullstack
@@ -291,11 +295,16 @@ def analyze(index: FileIndex) -> list[Route]:
     from .more_routes import analyze_more
     from .server_routes import analyze_servers
 
-    routes.extend(analyze_servers(index, Route))
-    routes.extend(analyze_fullstack(index))
-    routes.extend(analyze_backends(index))
-    routes.extend(analyze_functions(index))
-    routes.extend(analyze_more(index))
+    routes: list[Route] = []
+    for name, read in (("Next.js", lambda: next_routes(index)), ("server frameworks", lambda: analyze_servers(index, Route)),
+                       ("full-stack frameworks", lambda: analyze_fullstack(index)), ("backend frameworks", lambda: analyze_backends(index)),
+                       ("backend functions", lambda: analyze_functions(index)), ("other frameworks", lambda: analyze_more(index))):
+        try:
+            routes.extend(read())
+        except Exception as exc:  # scanned code can be anything: losing one reader mustn't lose the rest of the table
+            message = f"Couldn't read routes for {name}: {type(exc).__name__}: {str(exc)[:100]}"
+            if message not in index.analysis_errors:
+                index.analysis_errors.append(message)
     # The generic JavaScript reader also sees app.get(...) in these frameworks' files. The specific reader knows better.
     specific = {r.file for r in routes if r.kind in ("elysia", "hapi")}
     routes = [r for r in routes if r.file not in specific or r.kind in ("elysia", "hapi")]

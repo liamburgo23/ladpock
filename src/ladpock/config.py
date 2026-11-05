@@ -20,7 +20,7 @@ import re
 import tomllib
 from dataclasses import dataclass, field
 
-from .files import FileIndex
+from .files import FileIndex, as_dict
 
 NAMES = ("ladpock.toml", ".ladpock.toml")
 KNOWN = {"ignore": {"paths", "checks"}, "routes": {"auth_functions", "owner_functions", "public"}}
@@ -69,7 +69,7 @@ def _read(index: FileIndex) -> ProjectConfig:
         return ProjectConfig()
     try:
         data = tomllib.loads(index.read(source) or "")
-    except tomllib.TOMLDecodeError as exc:
+    except (tomllib.TOMLDecodeError, RecursionError) as exc:
         return ProjectConfig(source=source, warnings=[f"{source} couldn't be read, so it was ignored: {exc}"])
     warnings: list[str] = []
     for section, values in data.items():
@@ -77,7 +77,7 @@ def _read(index: FileIndex) -> ProjectConfig:
             warnings.append(f"{source}: unknown section [{section}]")
         elif isinstance(values, dict):
             warnings.extend(f"{source}: unknown setting {section}.{key}" for key in values if key not in KNOWN[section])
-    ignore, routes = data.get("ignore") or {}, data.get("routes") or {}
+    ignore, routes = as_dict(data.get("ignore")), as_dict(data.get("routes"))
     names = []
     for name in (*_strings(routes.get("auth_functions"), "routes.auth_functions", warnings),
                  *_strings(routes.get("owner_functions"), "routes.owner_functions", warnings)):

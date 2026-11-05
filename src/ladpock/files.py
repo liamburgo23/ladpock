@@ -8,6 +8,7 @@ Safety rules for scanning code we don't trust:
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from pathlib import Path
@@ -23,10 +24,10 @@ IGNORE_DIRS = {
 JS_EXT = frozenset({".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts", ".vue", ".svelte", ".astro"})
 PY_EXT = frozenset({".py"})
 CODE_EXT = JS_EXT | PY_EXT | {".go", ".rb", ".php", ".java", ".kt", ".cs", ".rs", ".swift", ".dart", ".scala", ".m", ".mm", ".c", ".h", ".cc", ".cpp",
-                              ".cxx", ".hpp", ".hh", ".sol", ".ex", ".exs", ".lua", ".pl"}
+                              ".cxx", ".hpp", ".hh", ".sol", ".ex", ".exs", ".lua", ".pl", ".ino"}
 CONFIG_EXT = frozenset({".json", ".jsonc", ".yml", ".yaml", ".toml", ".ini", ".cfg", ".conf", ".xml"})
 TEXT_EXT = CODE_EXT | CONFIG_EXT | {
-    ".sql", ".md", ".mdc", ".txt", ".html", ".htm", ".css", ".scss", ".rules", ".sh", ".bash", ".zsh", ".ps1", ".psm1",
+    ".ipynb", ".sql", ".md", ".mdc", ".txt", ".html", ".htm", ".css", ".scss", ".rules", ".sh", ".bash", ".zsh", ".ps1", ".psm1",
     ".bat", ".cmd", ".lock", ".prisma", ".graphql", ".gql", ".tf", ".hcl", ".properties", ".mod", ".sum",
     # server templates
     ".ejs", ".hbs", ".handlebars", ".pug", ".jade", ".njk", ".jinja", ".jinja2", ".j2", ".twig", ".erb", ".liquid",
@@ -52,6 +53,7 @@ _TEST_FILE = re.compile(r"(\.(test|spec|stories)\.[a-z]+$)|(^test_.*\.py$)|(_tes
 # Not text LadPock would normally read, but worth knowing about if they're there at all.
 SENSITIVE_FILE = re.compile(r"(?i)^(?:id_(?:rsa|dsa|ecdsa|ed25519)|.+\.(?:pem|key|p12|pfx|jks|keystore|ppk|kdbx|ovpn)|\.pypirc|\.netrc|_netrc|\.git-credentials)$")
 MAX_BYTES = 1_000_000
+MAX_NOTEBOOK_BYTES = 20_000_000  # saved charts make notebooks big, and keys can sit in any cell or output
 MAX_SOURCE_BYTES = 400_000  # for analysis that reads structure: bigger than this isn't hand-written
 MAX_LINE_AVERAGE = 1000  # and this is minified
 MAX_LOCKFILE_BYTES = 60_000_000
@@ -108,11 +110,34 @@ def basename(rel: str) -> str:
     return rel.rsplit("/", 1)[-1]
 
 
+def load_json(text: str | None):
+    """Parsed JSON from a scanned file, or None. Deep nesting raises RecursionError rather than a parse error, so that's caught too."""
+    try:
+        return json.loads(text or "")
+    except (ValueError, RecursionError):
+        return None
+
+
+def json_object(text: str | None) -> dict:
+    value = load_json(text)
+    return value if isinstance(value, dict) else {}
+
+
+def as_dict(value) -> dict:
+    """Scanned files can hold anything at any key, so nothing about their shape can be assumed."""
+    return value if isinstance(value, dict) else {}
+
+
+def as_list(value) -> list:
+    return value if isinstance(value, list) else []
+
+
 class FileIndex:
     def __init__(self, root: str | Path, max_files: int = 50_000):
         self.root = Path(root).resolve()
         self.paths: list[str] = []
         self.sensitive: list[str] = []
+        self.analysis_errors: list[str] = []
         self.skipped_large = 0
         self.truncated = False
         self._cache: dict[str, str | None] = {}
@@ -137,7 +162,7 @@ class FileIndex:
                     size = os.path.getsize(full)
                 except OSError:
                     continue
-                limit = MAX_LOCKFILE_BYTES if name in LOCKFILES else MAX_BYTES
+                limit = MAX_LOCKFILE_BYTES if name in LOCKFILES else MAX_NOTEBOOK_BYTES if name.endswith(".ipynb") else MAX_BYTES
                 if size > limit:
                     self.skipped_large += 1
                     continue

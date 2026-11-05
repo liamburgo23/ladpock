@@ -252,5 +252,5 @@ def server_get_session(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
     pattern = re.compile(r"\.auth\.getSession\s*\(")
     for rel, lineno, line, _ in grep(ctx, pattern, exts=JS_EXT):
         text = ctx.index.read(rel) or ""
-        if server_path.search(rel) or re.search(r"""^\s*['"]use server['"]""", text[:300], re.M):
+        if server_path.search(rel) or re.search(r"""^[ \t]*['"]use server['"]""", text[:300], re.M):
             yield ctx.finding(info, rel, lineno, line)

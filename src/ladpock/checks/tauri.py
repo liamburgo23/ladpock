@@ -66,7 +66,7 @@ def weak_csp(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
     for cfg in _configs(ctx):
         csp = cfg.get("app.security.csp", "tauri.security.csp")
         if isinstance(csp, dict):
-            csp = "; ".join(f"{k} {v if isinstance(v, str) else ' '.join(v)}" for k, v in csp.items())
+            csp = "; ".join(f"{k} {v if isinstance(v, str) else ' '.join(str(i) for i in v) if isinstance(v, list) else ''}" for k, v in csp.items())
         if isinstance(csp, str) and csp.strip():
             policy = _script_policy(csp)
             if UNSAFE_SCRIPT.search(f" {policy} "):
@@ -116,6 +116,7 @@ def broad_fs(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
         fs = cfg.get("tauri.allowlist.fs") or {}
         scope = fs.get("scope", []) if isinstance(fs, dict) else []
         scope = scope.get("allow", []) if isinstance(scope, dict) else scope
+        scope = scope if isinstance(scope, list) else []
         if cfg.get("tauri.allowlist.all") or (isinstance(fs, dict) and fs.get("all")) or any(
                 tauri.is_broad_path(str(p)) for p in scope):
             yield ctx.finding(info, cfg.file, cfg.line_of('"fs"') or cfg.line_of('"all"'), "allowlist fs: broad",
@@ -174,6 +175,7 @@ def asset_scope(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
         if cfg.version == 1:
             scope = cfg.get("tauri.security.assetScope") or []
         scope = scope.get("allow", []) if isinstance(scope, dict) else scope
+        scope = scope if isinstance(scope, list) else []
         broad = [str(p) for p in scope if tauri.is_broad_path(str(p))]
         if broad and (cfg.version == 1 or proto.get("enable")):
             yield ctx.finding(info, cfg.file, cfg.line_of("ssetProtocol") or cfg.line_of("assetScope"),
