@@ -72,7 +72,14 @@ follows; a change that breaks one is a security bug.
    name that resolves to loopback, proxy settings are ignored, and redirects aren't followed. By default only GET,
    HEAD and OPTIONS requests are sent (plus a short burst of failed sign-ins with a made-up account). Requests that
    could change data need an explicit opt-in and use placeholder IDs and empty bodies. Contents of exposed files are
-   masked in the report.
+   masked in the report. URLs are built by joining text onto the checked address, never with a URL resolver, so a
+   record ID or path from the app can't move a request to another host.
+
+   The optional two-account check takes session values for two test accounts you create. They're held in memory for
+   that one scan and sent only to the checked address. They aren't written to the database, the job record, the log,
+   findings or reports, and the dashboard doesn't save them in the browser. Error messages never repeat them. The check
+   only sends GET requests, whatever the write option says. Record IDs read from the app only go into a URL if they
+   contain nothing that could change the path.
 
 13. **The MCP server and the git hook only read.** `ladpock mcp` talks JSON-RPC over stdin/stdout to the client
    that started it. Its tools scan, list findings and build fix prompts; none edits code or settings, and results

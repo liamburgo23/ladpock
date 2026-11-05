@@ -149,10 +149,28 @@ class Scoring(unittest.TestCase):
         highs = scoring.score([Finding("Z", "t", Severity.HIGH, "authz") for _ in range(4)])
         self.assertEqual(next(c.grade for c in highs.categories if c.key == "authz"), "F")
 
-    def test_low_confidence_counts_half_and_doesnt_cap(self):
+    def test_low_confidence_counts_half_and_limits_one_step_less(self):
         card = scoring.score([self._f(Severity.HIGH, "low")])
         self.assertEqual(next(c.score for c in card.categories if c.key == "secrets"), 90)
-        self.assertGreater(card.overall, 79)
+        self.assertEqual(card.overall, 89)
+        self.assertEqual(scoring.score([self._f(Severity.CRITICAL, "low")]).overall, 79)
+
+    def test_a_plus_means_nothing_is_open(self):
+        self.assertEqual(scoring.score([self._f(Severity.MEDIUM)]).grade, "B+")
+        self.assertEqual(scoring.score([self._f(Severity.LOW)]).grade, "A")
+        self.assertEqual(scoring.score([self._f(Severity.LOW, "low")]).grade, "A")
+        self.assertEqual(scoring.score([self._f(Severity.MEDIUM, "low")]).grade, "A-")
+        self.assertEqual(scoring.score([self._f(Severity.HIGH, "low"), self._f(Severity.MEDIUM)]).overall, 89)
+        self.assertEqual(scoring.score([self._f(Severity.INFO)]).grade, "A+")
+        low = scoring.score([self._f(Severity.LOW)])
+        self.assertEqual(next(c.grade for c in low.categories if c.key == "secrets"), "A")  # the category too
+
+    def test_explain_names_what_is_holding_the_score(self):
+        explained = scoring.explain([self._f(Severity.MEDIUM)])
+        self.assertEqual((explained["cap"]["severity"], explained["cap"]["limit"], explained["cap"]["unconfirmed"]), ("medium", 89, False))
+        self.assertTrue(scoring.explain([self._f(Severity.HIGH, "low")])["cap"]["unconfirmed"])
+        self.assertIsNone(scoring.explain([])["cap"])
+        self.assertEqual(scoring.explain([self._f(Severity.MEDIUM)])["plan"][-1]["grade"], "A+")
 
 
 if __name__ == "__main__":

@@ -656,6 +656,8 @@ function scanPanel(p, data) {
     return null;
   };
   let liveUrl = load(`ladpock-live-${p.id}`) || "http://localhost:3000";
+  // Test-account logins stay in this page's memory only: never saved, and gone when you leave the page.
+  const accounts = { a: "", b: "", own: "", open: false };
   const effective = () => Object.fromEntries(OPTION_KEYS.map((k) => [k, k === "profile" ? opts.profile : Boolean(opts[k]) && !blocked(k)]));
   const tag = (text, kind) => h("span", { class: `tag ${kind}` }, text);
 
@@ -705,7 +707,30 @@ function scanPanel(p, data) {
     return [base, h("div", { class: "form-inline" }, h("span", null, "App address"), field),
       h("label", { class: "option", for: writes.id, style: "border:none;padding:4px 0" }, writes,
         h("span", null, "Also call routes that change data (POST, PUT, DELETE)", h("br"),
-          h("span", { class: "faint" }, "Uses placeholder IDs and empty bodies. Only do this against a development database.")))];
+          h("span", { class: "faint" }, "Uses placeholder IDs and empty bodies. Only do this against a development database."))),
+      accountsBlock()];
+  };
+  const accountsBlock = () => {
+    const secret = (key, label) => {
+      const input = h("input", { type: "password", class: "field grow", value: accounts[key], autocomplete: "off", "aria-label": label,
+        placeholder: "Cookie: session=...  or  Bearer ..." });
+      input.addEventListener("input", () => { accounts[key] = input.value; drawSummary(effective()); });
+      return h("div", { class: "form-inline" }, h("span", null, label), input);
+    };
+    const own = h("textarea", { class: "field", rows: "2", "aria-label": "Account A's records", style: "width:100%;margin-top:6px",
+      placeholder: "/api/orders/123" });
+    own.value = accounts.own;
+    own.addEventListener("input", () => { accounts.own = own.value; });
+    const box = h("details", { class: "compare", open: accounts.open || null, style: "margin-top:6px" },
+      h("summary", null, "Also test whether one account can read another's data"),
+      h("p", { class: "faint", style: "margin-top:6px" }, "Sign in to your app as two ordinary test accounts, each with some data of its own. "
+        + "In your browser's developer tools (Network tab, any request to your app) copy the Cookie or Authorization header for each. "
+        + "LadPock lists account A's records, then tries to open them as account B. It only reads, and these values are only kept on this page."),
+      secret("a", "Account A"), secret("b", "Account B"),
+      h("p", { class: "faint", style: "margin-top:6px" }, "Optional: addresses of account A's own records, one per line, if there's no list endpoint to find them from."),
+      own);
+    box.addEventListener("toggle", () => { accounts.open = box.open; });
+    return box;
   };
 
   const drawSummary = (eff) => {
@@ -718,6 +743,7 @@ function scanPanel(p, data) {
     if (eff.local_ai) will.push("Local AI review");
     if (eff.online_ai) will.push("Paid online AI review with Claude");
     if (eff.live) will.push(`Live checks against ${liveUrl}${eff.live_writes ? ", including routes that change data" : ""}`);
+    if (eff.live && accounts.a.trim() && accounts.b.trim()) will.push("Try to open account A's records as account B");
     const leaves = [];
     if (eff.online) leaves.push("Package names and versions, to OSV.dev, npm and PyPI. CVE IDs, to EPSS.");
     if (eff.online_ai) leaves.push("Your code with secrets masked, to Anthropic.");
@@ -770,7 +796,9 @@ function scanPanel(p, data) {
         + "budget left, and the review stops before going over it.");
       if (!ok) return;
     }
-    startTask(`/api/projects/${p.id}/run`, { ...eff, live_url: eff.live ? liveUrl : undefined });
+    const liveFields = eff.live ? { live_url: liveUrl, live_user_a: accounts.a || undefined, live_user_b: accounts.b || undefined,
+      live_own_urls: accounts.own.split("\n").map((u) => u.trim()).filter(Boolean) } : {};
+    startTask(`/api/projects/${p.id}/run`, { ...eff, ...liveFields });
   };
 
   api("GET", "/api/scanners").then((s) => {
@@ -1055,6 +1083,7 @@ function drawFindings(container, projectId, data, summary) {
     h("span", { class: "label" }, c.name), gradeEl(c.grade)))),
     h("p", { class: "faint" }, "Click any grade to see where the points went and how to reach A+."));
   if (summary.changes) container.append(changesCard(summary.changes, data.scan));
+  if (summary.live && !summary.live.error) container.append(liveCard(summary.live));
   const newRefs = new Set((summary.changes && summary.changes.new) || []);
 
   const scanners = (summary.scanners || []).map((s) => !s.available ? `${s.name} not installed` : s.ran ? `${s.name} ran` : `${s.name} failed`);
@@ -1105,6 +1134,21 @@ function drawFindings(container, projectId, data, summary) {
   } }, "Copy fix prompt for all");
   container.append(h("div", { class: "toolbar" }, filters, search, category, copyAll), list);
   draw();
+}
+
+function liveCard(live) {
+  const accounts = live.accounts;
+  const notes = live.notes || [];
+  return h("section", { class: "card changes", "aria-label": "Live checks" },
+    h("div", { class: "row" }, h("strong", null, "Live checks"), h("span", { class: "faint mono" }, live.url)),
+    h("p", null, `${plural(live.requests, "request")}, ${plural(live.routes, "route")} called · `,
+      h("span", { class: live.confirmed ? "cell-no" : "cell-yes" }, `${plural(live.confirmed, "problem")} confirmed`)),
+    accounts ? h("p", null, `Two accounts: ${plural(accounts.records_checked, "record")} tried as the other account · `,
+      h("span", { class: accounts.exposed ? "cell-no" : "faint" }, `${accounts.exposed} opened`), " · ",
+      h("span", { class: accounts.protected ? "cell-yes" : "faint" }, `${accounts.protected} refused`),
+      accounts.admin_exposed ? h("span", { class: "cell-no" }, ` · ${plural(accounts.admin_exposed, "admin endpoint")} open to ordinary accounts`) : null)
+      : h("p", { class: "faint" }, "Called without logging in. Add two test accounts in the scan panel to test whether one user can read another's data."),
+    notes.length ? h("ul", { class: "fixed-list faint" }, notes.map((note) => h("li", null, note))) : null);
 }
 
 function changesCard(c, scan) {
@@ -1191,8 +1235,8 @@ function drawGrade(container, id, data, focus) {
   const reasons = [];
   if (a.perfect) reasons.push("Nothing is open. Every category is at 100.");
   else {
-    if (a.cap) reasons.push(h("li", null, `Your categories average ${a.average}/100, but an open ${a.cap.severity} finding caps the overall score at `
-      + `${a.cap.limit} until it's fixed. A serious hole shouldn't hide behind tidy code.`));
+    if (a.cap) reasons.push(h("li", null, `Your categories average ${a.average}/100, but ${a.cap.unconfirmed ? "an unconfirmed" : "an open"} ${a.cap.severity} finding limits the overall score to `
+      + `${a.cap.limit} until it's fixed. An average would hide it: one real problem barely moves it.`));
     else reasons.push(h("li", null, `Your overall score is the average of ${plural(a.categories.length, "category", "categories")}: ${a.average}/100.`));
     if (below.length) reasons.push(h("li", null, "Categories below A+: ", below.map((c, i) => [i ? ", " : "",
       h("a", { href: `#/project/${id}/grade/${c.key}` }, `${c.name} ${c.grade} (${c.score})`)])));
@@ -1266,7 +1310,7 @@ function drawGrade(container, id, data, focus) {
     h("ul", null,
       h("li", null, `Each category starts at 100. ${WEIGHT_TEXT}`),
       h("li", null, "Small issues alone can't sink a category: with only medium findings it stays at 70 (C-) or above, with only low ones at 83 (B) or above."),
-      h("li", null, "The overall score is the average of the categories, capped at 59 (F) while a critical finding is open and 79 (C+) while a high one is."),
+      h("li", null, "The overall score is the average of the categories, limited while anything is open: 59 (F) with a critical finding, 79 (C+) with a high one, 89 (B+) with a medium one and 96 (A) with a low one. A low-confidence finding limits it one step less. A+ means nothing is open."),
       h("li", null, "A+ is 97 or more, A 93, B 83, C 73, D 63; below 60 is F.")),
     h("p", { class: "faint" }, leads ? `${plural(leads, "AI lead")} ${leads === 1 ? "is" : "are"} waiting for you on the Findings tab. AI leads never change the grade, so confirm or dismiss them yourself. ` : "",
       "Some protections can't be seen in code at all, so work through the Needs a human tab too. ", helpLink("grades", "More about grades"))));
@@ -1281,7 +1325,7 @@ async function drawRoutes(container, id, view) {
   if (view !== state.view) return;
   if (!data.routes.length && !data.commands.length) {
     container.replaceChildren(h("div", { class: "card empty" }, h("h2", null, "No routes or commands found"),
-      h("p", { class: "muted" }, "This view understands Next.js, Express, Fastify, Hono, Koa, NestJS, FastAPI, Flask and Django routes, and Tauri commands.")));
+      h("p", { class: "muted" }, "This view understands Next.js, SvelteKit, Remix, Nuxt, Astro, Express, Fastify, Hono, Koa, NestJS, FastAPI, Flask, Django, Spring, Go, Rails, Laravel and ASP.NET routes, and Tauri commands.")));
     return;
   }
   const cell = (value) => h("td", { class: value === "no" || value === "none" ? "cell-no" : value === "yes" || value === "sig" || value === "rls" || value === "dir" ? "cell-yes" : value === "mw" || value === "ext" ? "cell-mid" : "faint" }, value);
@@ -1453,7 +1497,7 @@ const HELP = [
   ["grades", "How grades work", [
     "Each category starts at 100. Open findings take points off: 40 for critical, 20 for high, 8 for medium and 2 for low. Findings LadPock is less sure about (low confidence) count half.",
     "A pile of small issues can't fail a category on its own. Only critical or high findings can take it below C-, and only medium ones below B.",
-    "The overall grade is the average of the categories, capped while a serious finding is open. With an open critical issue it's at most F (59). With an open high issue it's at most C+ (79). A leaked key shouldn't hide behind tidy code.",
+    "The overall grade is the average of the categories, limited by the worst finding that's still open: at most F (59) with a critical finding, C+ (79) with a high one, B+ (89) with a medium one and A (96) with a low one. A low-confidence finding limits it one step less, because it may not be a real problem. So A+ means nothing is open, and a leaked key can't hide behind tidy code.",
     "Roughly: A means no obvious problems found, B means a few things to tidy, C means real issues worth fixing soon, and D or F means something serious is open. A good grade isn't a guarantee: LadPock can't see your business logic, your dashboards or your production settings.",
     "Click a project's grade, or any category grade, to see exactly where the points went, the grade you'd reach after each round of fixes, a fix prompt for each step, and what would make the assessment itself more complete.",
   ]],
@@ -1469,7 +1513,7 @@ const HELP = [
       "Search git history: finds secrets that were committed and later deleted. Needs Gitleaks.",
       "Local AI review: a model on this computer reads your code for logic bugs. Free and private, but needs Ollama.",
       "Paid online AI review: Claude reads your code with secrets masked. Billed to your own Anthropic account, within a monthly budget you set.",
-      "Live checks against your running app: LadPock calls your app on this computer (never anywhere else) without logging in, to confirm which endpoints really answer, and checks headers, CORS, exposed files like .env and .git, error pages and sign-in rate limits. Requests that change data are only sent if you also tick that option, so use a development database for it. For the most realistic results, run a production build locally.",
+      "Live checks against your running app: LadPock calls your app on this computer (never anywhere else) without logging in, to confirm which endpoints really answer, and checks headers, CORS, exposed files like .env and .git, error pages and sign-in rate limits. Requests that change data are only sent if you also tick that option, so use a development database for it. For the most realistic results, run a production build locally. With two test accounts it also tries to open one account's records as the other, which only reads, and flags admin endpoints that answer ordinary accounts.",
       "Paid online scanners: commercial services with your own account. Not available yet."],
     "A greyed-out toggle says why it can't be used right now, for example a missing scanner or no API key. Your choices are remembered for each project.",
   ]],
@@ -1490,7 +1534,7 @@ const HELP = [
     "Confidence is how sure LadPock is that it's real. High means the pattern is unambiguous, for example a live key in the code. Medium means it's probably real. Low means it's a heuristic that needs a human look, for example “this route doesn't seem to check ownership”.",
   ]],
   ["coverage", "Deep checks and generic checks", [
-    "Some stacks have dedicated packs that understand how the framework works: Next.js, React, Supabase, Firebase and Stripe; Express, Fastify, Hono, Koa and NestJS; FastAPI, Flask and Django; Tauri and Electron; Android, iOS, React Native and Flutter; and Docker, Kubernetes, Terraform and GitHub Actions.",
+    "Some stacks have dedicated packs that understand how the framework works: Next.js, React, Supabase, Firebase and Stripe; SvelteKit, Remix, Nuxt and Astro; Express, Fastify, Hono, Koa and NestJS; FastAPI, Flask and Django; Spring, Go, Rails, Laravel and ASP.NET; Tauri and Electron; Android, iOS, React Native and Flutter; and Docker, Kubernetes, Terraform and GitHub Actions.",
     "Go, PHP, Ruby, Java/Kotlin, C# and Rust get language-specific versions of the injection, crypto and config checks. Everything else gets the generic checks: secrets, dependencies, injection patterns, config and AI code smells.",
     "Each project page lists which stacks got deep checks, so you know how thorough a scan was.",
   ]],
@@ -1524,7 +1568,7 @@ const HELP = [
     "Versions only change when LadPock is updated, in a reviewed change. If you installed a scanner yourself, LadPock uses yours and leaves it alone.",
   ]],
   ["routes", "Routes and commands", [
-    "The Routes tab lists every API route: Next.js handlers and server actions, Express, Fastify, Hono and Koa routes, NestJS controllers, and FastAPI, Flask and Django views. For each one it shows whether the handler checks who's calling (Auth), whether it checks the record belongs to them (Owner), whether input is validated, and whether there's a rate limit.",
+    "The Routes tab lists every API route: Next.js handlers and server actions; SvelteKit, Remix, Nuxt and Astro endpoints and form actions; Express, Fastify, Hono and Koa routes; NestJS controllers; FastAPI, Flask and Django views; and Spring, Go, Rails, Laravel and ASP.NET routes. For each one it shows whether the handler checks who's calling (Auth), whether it checks the record belongs to them (Owner), whether input is validated, and whether there's a rate limit.",
     "For Tauri, the Commands tab lists every command the app's web page can call. For each one it shows what input it takes from the page, whether it reads or writes files, whether it checks a path is inside an allowed folder, and whether it starts programs.",
     "Both are heuristic. Read “no” as “go and look”.",
   ]],

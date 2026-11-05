@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -46,7 +47,10 @@ def cmd_status(args, db: DB) -> int:
 
 def cmd_scan(args, db: DB) -> int:
     result = run_scan(args.path, db, profile=args.profile, offline=args.offline, external=not args.no_external,
-                      history=True if args.history else None, live_url=args.live, live_writes=args.live_writes)
+                      history=True if args.history else None, live_url=args.live, live_writes=args.live_writes,
+                      live_user_a=args.live_user_a or os.environ.get("LADPOCK_LIVE_USER_A"),
+                      live_user_b=args.live_user_b or os.environ.get("LADPOCK_LIVE_USER_B"),
+                      live_own_urls=args.live_own_url or ())
     if args.format == "json":
         _emit(json.dumps(result.to_dict(), indent=2), args.output)
     elif args.format == "sarif":
@@ -350,6 +354,14 @@ def build_parser() -> argparse.ArgumentParser:
                       help="also check your app running on this computer, e.g. http://localhost:3000 (localhost only)")
     scan.add_argument("--live-writes", action="store_true",
                       help="with --live, also call POST/PUT/PATCH/DELETE routes (use a development database)")
+    scan.add_argument("--live-user-a", metavar="LOGIN",
+                      help="with --live, a test account's session, e.g. 'Cookie: session=...' or 'Bearer ...'. Checks whether "
+                           "this account's records can be read by --live-user-b. Prefer the LADPOCK_LIVE_USER_A environment "
+                           "variable so it doesn't end up in your shell history")
+    scan.add_argument("--live-user-b", metavar="LOGIN", help="the second test account (or LADPOCK_LIVE_USER_B)")
+    scan.add_argument("--live-own-url", metavar="PATH", action="append",
+                      help="a record that belongs to account A, e.g. /api/orders/123, if LadPock can't find them itself "
+                           "(can be repeated)")
     scan.add_argument("--fail-on", choices=[s.label for s in Severity if s > Severity.INFO],
                       help="exit with code 1 if anything at or above this severity is found (for CI)")
 

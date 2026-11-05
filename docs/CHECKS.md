@@ -32,7 +32,7 @@ Generated with `ladpock checks --markdown`.
 | `LP-AUTH-007` | Login tokens that never expire | low | all projects |
 | `LP-AUTH-008` | Password hashing cost set too low | low | all projects |
 | `LP-AUTH-009` | Login errors reveal whether an account exists | low | all projects |
-| `LP-AUTH-010` | Sign-in or password endpoint has no rate limit | medium | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django |
+| `LP-AUTH-010` | Sign-in or password endpoint has no rate limit | medium | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet |
 | `LP-AUTH-011` | Token decoded but never verified | high | all projects |
 | `LP-INFRA-003` | Database with a default or empty password | medium | all projects |
 | `LP-LIVE-005` | Sign-in allows unlimited attempts | medium | all projects |
@@ -43,14 +43,16 @@ Generated with `ladpock checks --markdown`.
 
 | ID | Check | Default severity | Applies to |
 |---|---|---|---|
-| `LP-AUTHZ-001` | Endpoint changes data without checking who is calling | high | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django |
-| `LP-AUTHZ-002` | Record fetched by ID without checking it belongs to the user | high | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django |
-| `LP-AUTHZ-003` | Authentication only enforced in middleware | medium | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django |
+| `LP-AUTHZ-001` | Endpoint changes data without checking who is calling | high | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet |
+| `LP-AUTHZ-002` | Record fetched by ID without checking it belongs to the user | high | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet |
+| `LP-AUTHZ-003` | Authentication only enforced in middleware | medium | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet |
 | `LP-AUTHZ-004` | Request data saved straight into a database record (mass assignment) | medium | all projects |
 | `LP-AUTHZ-005` | Security check written as an assert | low | all projects |
 | `LP-AUTHZ-006` | Login requirement switched off for every route | high | all projects |
 | `LP-ELEC-004` | Whole IPC channel exposed to the web page | high | electron |
 | `LP-LIVE-001` | Endpoint answered without logging in | high | all projects |
+| `LP-LIVE-008` | One user can read another user's data | critical | all projects |
+| `LP-LIVE-009` | Ordinary account reached an admin endpoint | high | all projects |
 | `LP-MOB-003` | Android component open to other apps | medium | all projects |
 | `LP-SUPA-001` | Supabase table without Row Level Security | high | supabase |
 | `LP-SUPA-002` | Supabase policy lets everyone through | high | supabase |
@@ -71,8 +73,8 @@ Generated with `ladpock checks --markdown`.
 | `LP-ABUSE-003` | Regular expression built from user input | medium | all projects |
 | `LP-ABUSE-004` | Request size limit raised very high | low | all projects |
 | `LP-ABUSE-005` | Go HTTP server without timeouts | low | all projects |
-| `LP-ABUSE-010` | Paid AI or messaging API reachable without logging in | high | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django |
-| `LP-ABUSE-011` | Paid API endpoint has no rate limit | medium | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django |
+| `LP-ABUSE-010` | Paid AI or messaging API reachable without logging in | high | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet |
+| `LP-ABUSE-011` | Paid API endpoint has no rate limit | medium | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet |
 | `LP-API-002` | GraphQL has no query depth or cost limit | low | all projects |
 | `LP-INFRA-005` | Container has no CPU or memory limit | low | all projects |
 

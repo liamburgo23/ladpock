@@ -36,7 +36,7 @@ index files (no symlinks, size caps)
 |---|---|
 | `files.py` | One pass over the project, cached reads, test and AI-instruction file detection |
 | `checks/` | The check catalog. `base.py` holds the framework (`@check`, `regex_check`, `ScanContext`) |
-| `routes.py` | Next.js route matrix: auth, ownership, validation, rate limit, paid-API use per handler |
+| `routes.py`, `server_routes.py`, `fullstack_routes.py`, `backend_routes.py` | Route matrix: auth, ownership, validation, rate limit, paid-API use per handler, across frameworks |
 | `inventory.py` | Lockfile parsers: npm, yarn, pnpm, bun, pip, poetry, uv, Pipfile, Cargo, Composer, Gemfile, go.mod |
 | `feeds/` | OSV, CISA KEV, EPSS, npm/PyPI existence. HTTPS only, size-capped |
 | `advisories.py` | Matching, severity (GHSA label, then CVSS v3), fixed versions, "new since" logic |
@@ -59,8 +59,11 @@ and zero-days aren't in any database.
 Weights: critical 40, high 20, medium 8, low 2, halved for low-confidence findings. Category score = 100 minus
 weights, floored at 0. Since 0.5.0 it's also floored by the worst severity in the category: 70 (C-) if the worst is
 medium, 83 (B) if it's low. A pile of small issues can't fail a category; only critical or high findings can.
-Overall = the average of the category scores, capped while a critical (F) or high (C+) finding of medium or high
-confidence is open, so a leaked key can't hide behind a tidy codebase.
+Overall = the average of the category scores, limited by the worst finding still open: 59 (F) for critical, 79 (C+)
+for high, 89 (B+) for medium, 96 (A) for low. A low-confidence finding limits it one step less (79, 89, 92, 96),
+because it may not be real. Averaging over ten categories would otherwise let one real problem barely move the total:
+before 0.11.0, one high and one medium could still read as A+. A category with anything open tops out at 96 for the
+same reason, so A+ always means nothing is open.
 
 Findings can be hidden with `ladpock suppress` (expiring, with a recorded reason) or a `ladpock-ignore` comment
 (optionally `ladpock-ignore: LP-XXX-000`). Hidden findings are always counted in the report, because an AI
@@ -241,13 +244,41 @@ Releasing takes three deliberate steps:
 `ladpock shortcut` writes a launcher that runs `ladpock ui` in a terminal: a Windows `.lnk` (through PowerShell's
 WScript.Shell), a macOS `.command` or a Linux `.desktop` entry.
 
+## More route tables and the two-account check (0.11.0)
+
+**Route tables.** `fullstack_routes.py` (SvelteKit, Remix, Nuxt, Astro) and `backend_routes.py` (Spring, Go, Rails,
+Laravel, ASP.NET) produce the same `Route` record, so every access-control and abuse check applies to them without
+change. `backend_routes.Patterns` holds each framework's spelling of auth, validation and rate limiting.
+
+**Two-account check (`probe._TwoAccounts`).** The route matrix can suspect a missing ownership check; this proves it.
+Given session headers for two accounts, it:
+1. **Reads lists.** Every GET route without a dynamic segment is requested as A and as B. Record IDs come from JSON
+   records, or from links in a server-rendered list. The field follows the route's parameter name, then `ID_FIELDS`.
+2. **Decides what's private.** An ID in A's list and not B's is A's. An ID in both means shared data, so it's skipped
+   and counted. Under a parent only A has, every child is A's, even if B can list them, because that's the bug.
+   `/api/me`-style answers give A's own user ID for routes like `/api/users/[id]`.
+3. **Opens the record.** As A (it must answer), with no login (if that also answers it isn't private, and LP-LIVE-001
+   covers it), then as B.
+4. **Decides it's a leak.** JSON: B's body equals A's, or its ID field is the record's ID. Substring matching isn't used,
+   because a small numeric ID appears in almost any body. Pages: the words a person reads must be 90% alike, ignoring
+   scripts, meta tags and hidden inputs, with no refusal wording. These are medium confidence.
+5. **Rules out answers that aren't records.** Before reporting, it asks for a made-up ID. An answer that doesn't change
+   isn't holding a record.
+
+Refusals are recognised beyond status codes: `_answered` treats an empty JSON value, a `200 {"error": ...}` and a page
+with a password field as no answer, because these are common in generated code. The check has its own request
+allowance, so a large route table can't use it up first, and a note appears if any limit stops a scan early.
+
+Only B's reads of A's records are tried, so an account with a higher role in position A doesn't produce false reports.
+The check doesn't try writes: a real ID is a real record, and the rule in SECURITY.md is that placeholder IDs are the
+only ones ever written to.
+
 ## Next milestones
 
 1. **Paid online scanners.** Optional integrations with commercial scanners using your own account, behind the same
    kind of toggle, consent and "never send" rules as the online AI review.
-2. **More packs.** Express/Fastify, FastAPI/Django, SvelteKit, Remix, Electron. Each one adds a route parser, rules and fixtures.
-3. **Live probes.** Localhost by default, ownership-verified otherwise. Headers, CORS, exposed paths, a small rate-limit burst.
-4. **Notifications.** Optional desktop notification when a long task or the nightly review finishes.
+2. **Accuracy study.** Run against real open-source apps and publish false-positive rates per check.
+3. **Notifications.** Optional desktop notification when a long task or the nightly review finishes.
 
 ## Tasks in the dashboard (0.5.0)
 

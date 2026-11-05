@@ -171,7 +171,9 @@ def _dedupe(findings: list[Finding]) -> list[Finding]:
 def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bool = False,
              external: bool = True, history: bool | None = None, log: Callable[[str], None] = _log,
              step: Callable[[str], None] = lambda _name: None, live_url: str | None = None,
-             live_writes: bool = False, should_stop: Callable[[], bool] = lambda: False) -> ScanResult:
+             live_writes: bool = False, should_stop: Callable[[], bool] = lambda: False,
+             live_user_a: str | None = None, live_user_b: str | None = None,
+             live_own_urls: list[str] | tuple[str, ...] = ()) -> ScanResult:
     """Scan a project. ``step`` is called with each name in SCAN_STEPS as the scan reaches it."""
     root = Path(path).resolve()
     if not root.is_dir():
@@ -254,10 +256,12 @@ def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bo
     if live_url:
         step("Live checks")
         try:
-            probed = probe.run_probe(live_url, ctx.routes, include_writes=live_writes, log=log, should_stop=should_stop)
+            probed = probe.run_probe(live_url, ctx.routes, include_writes=live_writes, log=log, should_stop=should_stop,
+                                     user_a=live_user_a, user_b=live_user_b, own_urls=live_own_urls)
             findings.extend(probed.findings)
             live = {"url": probed.base, "requests": probed.requests, "routes": probed.checked_routes,
-                    "confirmed": len(probed.findings), "skipped_writes": probed.skipped_writes, "notes": probed.notes}
+                    "confirmed": len(probed.findings), "skipped_writes": probed.skipped_writes, "notes": probed.notes,
+                    "accounts": probed.accounts}
         except probe.ProbeError as exc:
             errors.append(f"Live checks: {exc}")
             live = {"url": live_url, "error": str(exc)}

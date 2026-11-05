@@ -63,8 +63,9 @@ TOOLS = [
     },
     {
         "name": "ladpock_routes",
-        "description": "List every API endpoint LadPock found (Next.js, Express, Fastify, Hono, NestJS, FastAPI, Flask, "
-                       "Django) with whether it checks login, record ownership, input validation and rate limits.",
+        "description": "List every API endpoint LadPock found (Next.js, SvelteKit, Remix, Nuxt, Astro, Express, Fastify, Hono, "
+                       "Koa, NestJS, FastAPI, Flask, Django, Spring, Go, Rails, Laravel, ASP.NET) with whether it checks login, "
+                       "record ownership, input validation and rate limits.",
         "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
     },
     {
@@ -147,7 +148,8 @@ def call_tool(db: DB, name: str, args: dict) -> str:
         root, _ = _project(db, args["path"])
         routes = analyze(FileIndex(root))
         if not routes:
-            return "No HTTP routes found (supported: Next.js, Express, Fastify, Hono, Koa, NestJS, FastAPI, Flask, Django)."
+            return ("No HTTP routes found (supported: Next.js, SvelteKit, Remix, Nuxt, Astro, Express, Fastify, Hono, Koa, NestJS, "
+                    "FastAPI, Flask, Django, Spring, Go, Rails, Laravel, ASP.NET).")
         return "\n".join(f"{r.method} {r.path} ({r.file}:{r.line}) auth={r.auth} owner={r.owner} validation={r.validation} "
                          f"rate_limit={r.rate_limit}" + (f" GAPS: {', '.join(gaps(r))}" if gaps(r) else "") for r in routes)
     if name == "ladpock_explain_grade":
@@ -157,7 +159,7 @@ def call_tool(db: DB, name: str, args: dict) -> str:
         a = scoring.explain([finding_from_dict(f) for f in findings], categories)
         lines = [f"{root.name}: {a['grade']} ({a['score']}/100)."]
         if a["cap"]:
-            lines.append(f"Capped at {a['cap']['limit']} by an open {a['cap']['severity']} finding (categories average {a['average']}).")
+            lines.append(f"Limited to {a['cap']['limit']} by an open {a['cap']['severity']} finding (categories average {a['average']}).")
         for c in a["categories"]:
             if c["deductions"]:
                 lines.append(f"{c['name']}: {c['grade']} ({c['score']}), " + "; ".join(

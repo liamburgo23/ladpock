@@ -27,11 +27,12 @@ CRITICAL (6)
 
 ## What it does
 
-- **120 built-in checks** across secrets, sign-in, authorization, API abuse and cost, injection, payments,
+- **122 built-in checks** across secrets, sign-in, authorization, API abuse and cost, injection, payments,
   crypto, config, supply chain, and AI-generated code smells. Run `ladpock checks` for the list, or see
   [docs/CHECKS.md](docs/CHECKS.md).
-- **A route matrix** for Next.js (App Router, Pages API and server actions), Express, Fastify, Hono, Koa, NestJS,
-  FastAPI, Flask and Django. It shows every endpoint with its auth, ownership check, validation and rate limiting,
+- **A route matrix** for Next.js (App Router, Pages API and server actions), SvelteKit, Remix, Nuxt, Astro, Express,
+  Fastify, Hono, Koa, NestJS, FastAPI, Flask, Django, Spring, Go (net/http, chi, gin, echo, fiber, gorilla/mux), Rails,
+  Laravel and ASP.NET. It shows every endpoint with its auth, ownership check, validation and rate limiting,
   and flags the gaps: unauthenticated writes, records fetched by ID without an ownership check, auth only in
   middleware, paid AI endpoints without a login or rate limit.
 - **Infrastructure checks** for Dockerfiles, Docker Compose, Kubernetes manifests, Terraform and GitHub Actions:
@@ -50,7 +51,8 @@ CRITICAL (6)
   and which start programs. Tauri v2 and v1 configs are both supported.
 - **Live checks against your running app.** Point LadPock at your app on this computer (`--live
   http://localhost:3000`, or the toggle in the dashboard) and it confirms which endpoints really answer without a
-  login, and checks security headers, CORS, exposed `.env`/`.git` files, error pages and sign-in rate limits. It
+  login, and checks security headers, CORS, exposed `.env`/`.git` files, error pages and sign-in rate limits. Give
+  it two test accounts and it tries to open one account's records as the other, the most common serious web bug. It
   only ever talks to localhost, and only sends requests that change data if you ask.
 - **Live vulnerability data before every run.** Your dependencies are checked against [OSV.dev](https://osv.dev),
   prioritised with CISA's [Known Exploited Vulnerabilities](https://www.cisa.gov/known-exploited-vulnerabilities-catalog)
@@ -124,7 +126,7 @@ check of every project, one after another.
 
 **Click any grade** to see why it isn't A+:
 - where every point went, category by category
-- whether an open critical or high finding is capping the overall score
+- which open finding is limiting the overall score (A+ means nothing is open)
 - the grade you'd reach after each round of fixes, with a fix prompt for each round
 - what would make the assessment itself more complete (missing scanners, offline data, no lockfile, unconfirmed
   manual checks)
@@ -294,6 +296,22 @@ It refuses any address that isn't this computer. Routes that change data (POST, 
 unless you add `--live-writes`, and even then they get placeholder IDs and empty bodies. Only do that against a
 development database.
 
+**Can one user read another's data?** Sign in to your app as two ordinary test accounts, each with some data of its
+own, and copy each one's `Cookie` or `Authorization` header from your browser's developer tools:
+
+```bash
+export LADPOCK_LIVE_USER_A="Cookie: session=..."
+export LADPOCK_LIVE_USER_B="Cookie: session=..."
+ladpock scan . --live http://localhost:3000
+```
+
+Environment variables keep them out of your shell history; `--live-user-a` and `--live-user-b` work too, and the scan
+panel has fields for them. LadPock reads account A's lists to find its records (or take them from
+`--live-own-url /api/orders/123`), then opens them as account B. It reports the route's line of code when B gets A's
+record, and treats records both accounts can list as shared. It also reports admin endpoints that answer both accounts.
+This check only reads, even with `--live-writes`. The login values are held in memory, only sent to your app on this
+computer, and never logged or saved.
+
 ### With Claude Code
 
 ```bash
@@ -324,13 +342,15 @@ won't replace an existing hook unless you pass `--force`; `ladpock hook remove` 
 | Stack | Depth |
 |---|---|
 | Next.js, React, Supabase, Firebase, Stripe | Framework-aware checks and route matrix |
+| SvelteKit, Remix, Nuxt, Astro | Route matrix (endpoints, loaders, form actions, hooks and middleware) |
 | Express, Fastify, Hono, Koa, NestJS | Route matrix (middleware, guards, validation, rate limits) and Node server checks |
 | FastAPI, Flask, Django and Django REST Framework | Route matrix (decorators, Depends, permission classes) and settings checks |
 | Tauri (v2 and v1) | CSP, capabilities, asset protocol, updater, and the command matrix |
 | Electron | Window settings, preload/IPC exposure, navigation, CSP and IPC handlers |
 | Android, iOS, React Native/Expo, Flutter | Manifest and ATS settings, storage, WebViews, certificate checks |
 | Docker, Compose, Kubernetes, Terraform, GitHub Actions | Infrastructure-as-code checks |
-| Go, PHP/Laravel, Ruby/Rails, Java/Spring, .NET, Rust | Language-specific injection, crypto, config and framework-setting checks |
+| Spring, Go, Rails, Laravel, ASP.NET | Route matrix (annotations, filters, middleware, authorization attributes) and language checks |
+| PHP, Ruby, Java, C#, Rust | Language-specific injection, crypto, config and framework-setting checks |
 | Anything else | Generic checks: secrets, dependencies, injection patterns, config, AI code smells |
 
 Each scan says which stacks got deep checks, so you know how thorough it was.
@@ -363,8 +383,7 @@ it. Secrets are masked before anything is stored.
 ## Roadmap
 
 - Paid online scanners with your own account (for example Snyk or Socket)
-- Route matrices for SvelteKit, Remix, Nuxt, Rails, Laravel, Spring, Go and ASP.NET
-- Live checks that sign in as two test users and try to read each other's data
+- An accuracy study against real open-source apps, with false-positive rates published
 
 See [docs/DESIGN.md](docs/DESIGN.md) for the architecture and the decisions behind it.
 

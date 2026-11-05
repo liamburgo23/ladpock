@@ -198,9 +198,22 @@ def run_options(body: dict, **defaults) -> dict:
     for key in ("online", "scanners", "local_ai", "online_ai", "live", "live_writes"):
         options[key] = _bool(body, key, merged[key])
     options["live_url"] = None
+    options["live_user_a"] = options["live_user_b"] = None
+    options["live_own_urls"] = ()
     if options["live"]:
+        user_a, user_b = str(body.get("live_user_a") or ""), str(body.get("live_user_b") or "")
+        own = body.get("live_own_urls") or []
         try:
             options["live_url"] = probe.check_target(str(body.get("live_url") or "http://localhost:3000"))
+            if bool(user_a.strip()) != bool(user_b.strip()):
+                raise probe.ProbeError("The two-account check needs a login for both account A and account B")
+            if user_a.strip():
+                probe.parse_login(user_a, "Account A")
+                probe.parse_login(user_b, "Account B")
+                options["live_user_a"], options["live_user_b"] = user_a, user_b
+            if not isinstance(own, list) or len(own) > 50:
+                raise probe.ProbeError("Give at most 50 record addresses")
+            options["live_own_urls"] = tuple(probe.own_url_path(str(u), options["live_url"]) for u in own if str(u).strip())
         except probe.ProbeError as exc:
             raise ApiError(400, str(exc)) from exc
     history = body.get("history", merged["history"])
@@ -229,7 +242,9 @@ def run_project(db: DB, job: Job, project_id: int, options: dict, prefix: str = 
     result = run_scan(row["path"], db, profile=options["profile"], offline=not options["online"],
                       external=options["scanners"], history=options["history"], log=job.log.append,
                       step=lambda name: job.enter(label(name)), live_url=options.get("live_url"),
-                      live_writes=options.get("live_writes", False), should_stop=job.stop.is_set)
+                      live_writes=options.get("live_writes", False), should_stop=job.stop.is_set,
+                      live_user_a=options.get("live_user_a"), live_user_b=options.get("live_user_b"),
+                      live_own_urls=options.get("live_own_urls", ()))
     out = {"project_id": project_id, "name": row["name"], **_scan_result(result)}
 
     def progress(done: int, total: int) -> None:
@@ -400,6 +415,13 @@ def assessment_payload(db: DB, project_id: int, scan, findings: list[dict], summ
                                 "endpoints really answer, and check headers, CORS and exposed files."
                                 + (f" Last attempt: {live['error']}" if live.get("error") else ""),
                       "fix": "Start your app, then scan with Live checks on", "href": f"#/project/{project_id}"})
+    elif not (live.get("accounts") or {}).get("records_checked"):
+        gaps_.append({"id": "accounts", "title": "One user reading another's data wasn't tested",
+                      "detail": "The most common serious bug in web apps is one signed-in user opening another's records "
+                                "by changing an ID. Scanning with two test accounts tries exactly that, and only reads."
+                                + (" The last attempt couldn't try any records: see the Live checks card."
+                                   if live.get("accounts") else ""),
+                      "fix": "Scan with Live checks on and add two test accounts", "href": f"#/project/{project_id}"})
     used = summary.get("options") or {}
     if used.get("scanners") is False and scan["profile"] != "quick":
         gaps_.append({"id": "scanners-off", "title": "Installed scanners were turned off for the last scan",

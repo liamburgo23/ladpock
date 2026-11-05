@@ -8,6 +8,11 @@ from .models import CATEGORIES, Finding, Severity
 
 WEIGHTS = {Severity.CRITICAL: 40, Severity.HIGH: 20, Severity.MEDIUM: 8, Severity.LOW: 2, Severity.INFO: 0}
 CATEGORY_FLOOR = {Severity.MEDIUM: 70, Severity.LOW: 83, Severity.INFO: 100}
+# The most the overall score can be while a finding like this is open. Categories are averaged, so without these one
+# real problem barely moves the total, and A+ wouldn't mean what it says: nothing left to fix.
+CAPS = {Severity.CRITICAL: 59, Severity.HIGH: 79, Severity.MEDIUM: 89, Severity.LOW: 96}
+UNSURE_CAPS = {Severity.CRITICAL: 79, Severity.HIGH: 89, Severity.MEDIUM: 92, Severity.LOW: 96}  # low confidence
+CATEGORY_CAP = 96  # the same rule for a category: A+ means nothing open in it
 _GRADES = [
     (97, "A+"), (93, "A"), (90, "A-"), (87, "B+"), (83, "B"), (80, "B-"),
     (77, "C+"), (73, "C"), (70, "C-"), (67, "D+"), (63, "D"), (60, "D-"),
@@ -24,6 +29,10 @@ def grade(score: int) -> str:
 def weight(finding: Finding) -> float:
     base = WEIGHTS[finding.severity]
     return base / 2 if finding.confidence == "low" else base
+
+
+def cap_for(finding: Finding) -> int:
+    return (UNSURE_CAPS if finding.confidence == "low" else CAPS).get(finding.severity, 100)
 
 
 @dataclass
@@ -63,22 +72,17 @@ def score(findings: list[Finding], categories: set[str] | None = None) -> Scorec
         # take it below C-, and only medium ones below B.
         worst_in_cat = max((f.severity for f in in_cat), default=Severity.INFO)
         value = max(value, CATEGORY_FLOOR.get(worst_in_cat, 0))
+        if worst_in_cat != Severity.INFO:
+            value = min(value, CATEGORY_CAP)
         cats.append(CategoryScore(key, CATEGORIES[key], value, grade(value), _counts(in_cat)))
 
     overall = round(sum(c.score for c in cats) / len(cats)) if cats else 100
-    # An open critical or high issue caps the grade: a project with a leaked
-    # key shouldn't read as "B" just because everything else is tidy.
-    worst = max((f.severity for f in findings if f.confidence != "low"), default=Severity.INFO)
-    if worst == Severity.CRITICAL:
-        overall = min(overall, 59)
-    elif worst == Severity.HIGH:
-        overall = min(overall, 79)
+    overall = min([overall, *(cap_for(f) for f in findings)])
     return Scorecard(overall, grade(overall), cats, _counts(findings))
 
 
 # explaining a grade
 
-CAPS = {Severity.CRITICAL: 59, Severity.HIGH: 79}
 SEVERITY_ORDER = [Severity.CRITICAL, Severity.HIGH, Severity.MEDIUM, Severity.LOW]
 
 
@@ -86,13 +90,15 @@ def explain(findings: list[Finding], categories: set[str] | None = None) -> dict
     """Why a project got its grade, and the grade it would reach after each round of fixes."""
     card = score(findings, categories)
     average = round(sum(c.score for c in card.categories) / len(card.categories)) if card.categories else 100
-    capping = max((f.severity for f in findings if f.confidence != "low"), default=Severity.INFO)
+    limit = min((cap_for(f) for f in findings), default=100)
     cap = None
-    if capping in CAPS and average > CAPS[capping]:
+    if limit < average:
+        holding = [f for f in findings if cap_for(f) == limit]
         cap = {
-            "severity": capping.label,
-            "limit": CAPS[capping],
-            "refs": [f.fingerprint for f in findings if f.severity == capping and f.confidence != "low"],
+            "severity": max(f.severity for f in holding).label,
+            "limit": limit,
+            "unconfirmed": all(f.confidence == "low" for f in holding),
+            "refs": [f.fingerprint for f in holding],
         }
 
     cats = []
