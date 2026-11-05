@@ -49,6 +49,8 @@ TEST_DIRS = {"test", "tests", "__tests__", "spec", "specs", "e2e", "cypress", "p
 _TEST_FILE = re.compile(r"(\.(test|spec|stories)\.[a-z]+$)|(^test_.*\.py$)|(_test\.(py|go)$)")
 
 MAX_BYTES = 1_000_000
+MAX_SOURCE_BYTES = 400_000  # for analysis that reads structure: bigger than this isn't hand-written
+MAX_LINE_AVERAGE = 1000  # and this is minified
 MAX_LOCKFILE_BYTES = 60_000_000
 
 
@@ -156,6 +158,13 @@ class FileIndex:
             text = self.read(rel)
             self._lines[rel] = text.splitlines() if text else []
         return self._lines[rel]
+
+    def sources(self, exts: frozenset[str] | set[str] | None = None) -> Iterator[str]:
+        """Files worth analysing in depth: written by a person, so not huge and not minified."""
+        for rel in self.iter(exts):
+            text = self.read(rel)
+            if text and len(text) <= MAX_SOURCE_BYTES and len(text) / (text.count("\n") + 1) <= MAX_LINE_AVERAGE:
+                yield rel
 
     def iter(
         self,

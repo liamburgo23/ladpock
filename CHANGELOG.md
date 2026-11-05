@@ -3,6 +3,25 @@
 All notable changes to LadPock. Versions follow [semantic versioning](https://semver.org/); while LadPock is below
 1.0, minor versions can include changes to checks and grades.
 
+## [0.13.0] - 2026-11-05
+
+### Added
+- Findings from the code now use what the running app did. If the code looks unprotected but the app refuses the request, the
+  finding drops to low confidence and says why. If the app answers, or one test account opens another's record, it's marked as
+  confirmed. Shown as **Confirmed live** and **Refused live** in the dashboard and in reports.
+- Supply-chain checks: install scripts that download or run code, packages from outside the registry (URLs, git, plain HTTP,
+  extra indexes, `strict-ssl=false`), dependencies that allow any version, AI tool (MCP) servers with no fixed version or over
+  plain HTTP, projects that run a command when opened (VS Code tasks, devcontainers, AI tool hooks), and build scripts that pipe a
+  download into a shell.
+- Checks for code that wipes the database on start or deploy, login that can be switched off with a setting, sites that don't
+  insist on HTTPS, database consoles reachable from the web, and web server settings (folder listings, alias path traversal,
+  old TLS versions).
+- More token checks: .NET's `ValidateLifetime = false` and similar, Go and Java `ParseUnverified`, Laravel's `'secure' => false`.
+
+### Fixed
+- A very large or deliberately crafted file could stall a scan for minutes or indefinitely. Structural analysis now skips files
+  over 400 KB and minified files, and has limits per file. Line-by-line checks still read them.
+
 ## [0.12.0] - 2026-11-05
 
 ### Added
@@ -149,6 +168,7 @@ All notable changes to LadPock. Versions follow [semantic versioning](https://se
   EPSS with "new since you last looked"; hallucinated-package detection; grades; fix prompts; JSON and SARIF
   output; and support for Gitleaks, OSV-Scanner and Opengrep.
 
+[0.13.0]: https://github.com/liamburgo23/ladpock/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/liamburgo23/ladpock/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/liamburgo23/ladpock/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/liamburgo23/ladpock/compare/v0.9.0...v0.10.0

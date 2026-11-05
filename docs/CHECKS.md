@@ -62,6 +62,7 @@ Generated with `ladpock checks --markdown`.
 | `LP-AUTHZ-008` | Users can choose their own role | high | all projects |
 | `LP-AUTHZ-009` | Admin or paid status trusted from the browser | high | all projects |
 | `LP-AUTHZ-010` | User ID taken from the request instead of the session | high | all projects |
+| `LP-AUTHZ-011` | Login can be switched off with a setting | high | all projects |
 | `LP-ELEC-004` | Whole IPC channel exposed to the web page | high | electron |
 | `LP-LIVE-001` | Endpoint answered without logging in | high | all projects |
 | `LP-LIVE-008` | One user can read another user's data | critical | all projects |
@@ -160,7 +161,9 @@ Generated with `ladpock checks --markdown`.
 | `LP-CFG-006` | Client IP taken from headers anyone can set | low | all projects |
 | `LP-CFG-007` | Spring Boot actuator endpoints exposed | high | all projects |
 | `LP-CFG-008` | Detailed errors shown to visitors in production | medium | all projects |
-| `LP-CFG-009` | Image optimiser accepts any website | medium | all projects |
+| `LP-CFG-009` | Image optimiser settings are too open | medium | all projects |
+| `LP-CFG-010` | Site doesn't insist on HTTPS | medium | all projects |
+| `LP-CFG-011` | Database console reachable from the web | high | all projects |
 | `LP-DOCKER-001` | Container runs as root | medium | all projects |
 | `LP-ELEC-001` | Web page inside the app can use Node.js | high | electron |
 | `LP-ELEC-002` | Context isolation or the sandbox turned off | high | electron |
@@ -170,6 +173,7 @@ Generated with `ladpock checks --markdown`.
 | `LP-ELEC-008` | No Content Security Policy for the app's pages | medium | electron |
 | `LP-INFRA-001` | Container can take over the host | high | all projects |
 | `LP-INFRA-002` | Database or admin port open on every network interface | medium | all projects |
+| `LP-INFRA-006` | Web server settings expose files or weak encryption | high | all projects |
 | `LP-LIVE-002` | Security headers missing from responses | low | all projects |
 | `LP-LIVE-003` | App lets any website read its responses (CORS) | medium | all projects |
 | `LP-LIVE-006` | Error page shows a stack trace | medium | all projects |
@@ -202,6 +206,12 @@ Generated with `ladpock checks --markdown`.
 | `LP-SUP-005` | Dependency doesn't exist on the package registry | critical | all projects |
 | `LP-SUP-006` | Workflow puts untrusted text straight into a script | high | github-actions |
 | `LP-SUP-007` | Workflow gives its token write access to everything | medium | github-actions |
+| `LP-SUP-008` | Install script downloads or runs code | high | all projects |
+| `LP-SUP-009` | Package comes from outside the registry | medium | all projects |
+| `LP-SUP-010` | Dependency allows any version | low | all projects |
+| `LP-SUP-011` | AI tool runs a package with no fixed version | medium | all projects |
+| `LP-SUP-012` | Project runs a command when opened | medium | all projects |
+| `LP-SUP-013` | Build script downloads and runs code in one step | medium | all projects |
 | `LP-TAURI-008` | App updates aren't safely verified | high | tauri |
 
 ## AI-generated code smells
@@ -214,3 +224,4 @@ Generated with `ladpock checks --markdown`.
 | `LP-VIBE-004` | Debug mode switched on | medium | all projects |
 | `LP-VIBE-005` | Stack trace sent back to the user | medium | all projects |
 | `LP-VIBE-006` | Type or lint errors ignored in the build | low | all projects |
+| `LP-VIBE-007` | Code that wipes the database on start or deploy | high | all projects |

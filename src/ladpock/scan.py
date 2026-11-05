@@ -260,6 +260,7 @@ def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bo
         try:
             probed = probe.run_probe(live_url, ctx.routes, include_writes=live_writes, log=log, should_stop=should_stop,
                                      user_a=live_user_a, user_b=live_user_b, own_urls=live_own_urls)
+            probe.correlate(findings, probed)
             findings.extend(probed.findings)
             live = {"url": probed.base, "requests": probed.requests, "routes": probed.checked_routes,
                     "confirmed": len(probed.findings), "skipped_writes": probed.skipped_writes, "notes": probed.notes,

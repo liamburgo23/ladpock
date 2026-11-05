@@ -13,7 +13,7 @@ import re
 from dataclasses import dataclass
 
 from .files import FileIndex
-from .jsparse import line_of, match_bracket, split_args, strip_comments
+from .jsparse import capped, line_of, match_bracket, split_args, strip_comments
 from .routes import MUTATING, Route
 from .server_routes import DYNAMIC, PAID_CALL
 
@@ -110,12 +110,12 @@ def _prefix_matches(patterns: list[str], path: str) -> bool:
 
 
 def spring_routes(index: FileIndex) -> list[Route]:
-    files = {rel: strip_comments(index.read(rel) or "", quotes='"') for rel in index.iter({".java", ".kt"})}
+    files = {rel: strip_comments(index.read(rel) or "", quotes='"') for rel in index.sources({".java", ".kt"})}
     config = "\n".join(code for code in files.values() if "SecurityFilterChain" in code or "HttpSecurity" in code)
     global_auth = bool(re.search(r"anyRequest\(\)\s*\.\s*(?:authenticated|hasRole|hasAuthority|fullyAuthenticated)\b", config))
     public_paths: list[str] = []
     protected_paths: list[str] = []
-    for match in SPRING_MATCHERS.finditer(config):
+    for match in capped(SPRING_MATCHERS.finditer(config)):
         paths = re.findall(r"\"([^\"]*)\"", match.group(1))
         (public_paths if match.group(2) == "permitAll" else protected_paths).extend(paths)
     routes = []
@@ -136,7 +136,7 @@ def spring_routes(index: FileIndex) -> list[Route]:
             prefix = _first_string(args) or ""
         class_auth = bool(SPRING_AUTH.search(head))
         previous = head_end
-        for match in SPRING_MAPPING.finditer(code, head_end):
+        for match in capped(SPRING_MAPPING.finditer(code, head_end)):
             args, after = _spring_annotation(code, match.end())
             # Skip any further annotations and their arguments to reach the method's own signature.
             pos = max(after, match.end())
@@ -203,10 +203,10 @@ GO_NOT_ROUTER = {"http", "client", "c", "ctx", "req", "resp", "url", "os", "cach
 
 
 def go_routes(index: FileIndex) -> list[Route]:
-    files = {rel: strip_comments(index.read(rel) or "", quotes='"`') for rel in index.iter({".go"})}
+    files = {rel: strip_comments(index.read(rel) or "", quotes='"`') for rel in index.sources({".go"})}
     functions: dict[str, str] = {}
     for code in files.values():
-        for match in GO_FUNC.finditer(code):
+        for match in capped(GO_FUNC.finditer(code)):
             brace = code.find("{", match.end())
             end = match_bracket(code, brace, quotes='"`') if brace > 0 else -1
             if end > 0:
@@ -216,18 +216,18 @@ def go_routes(index: FileIndex) -> list[Route]:
         echo = "labstack/echo" in code
         groups: dict[str, tuple[str, str]] = {}  # variable -> (full prefix, parent)
         group_mw: dict[str, str] = {}
-        for match in GO_GROUP.finditer(code):
+        for match in capped(GO_GROUP.finditer(code)):
             parent = groups.get(match.group(2), ("", ""))[0]
             groups[match.group(1)] = (_join(parent, match.group(3)) if match.group(3) or parent else "", match.group(2))
             group_mw[match.group(1)] = match.group(4) or ""
         scopes = []  # (start, end, prefix): chi r.Route("/x", func(r chi.Router) {...}) and r.Group(func...)
-        for match in GO_SCOPE.finditer(code):
+        for match in capped(GO_SCOPE.finditer(code)):
             brace = match.end() - 1
             end = match_bracket(code, brace, quotes='"`')
             if end > 0:
                 scopes.append((brace, end, match.group(2) or ""))
         uses = []  # (receiver, offset, text)
-        for match in GO_USE.finditer(code):
+        for match in capped(GO_USE.finditer(code)):
             close = match_bracket(code, match.end() - 1, quotes='"`')
             if close > 0:
                 uses.append((match.group(1), match.start(), code[match.end(): close]))
@@ -279,9 +279,9 @@ def go_routes(index: FileIndex) -> list[Route]:
                 mw_auth=bool(GO_AUTH_NAME.search(mw)), mw_rate=bool(GO.rate.search(mw)),
             ))
 
-        for match in GO_ROUTE.finditer(code):
+        for match in capped(GO_ROUTE.finditer(code)):
             add(match.group(1), match.group(2), match.group(3), match.start(), code.index("(", match.start() + len(match.group(1)) + 1))
-        for match in GO_WITH.finditer(code):
+        for match in capped(GO_WITH.finditer(code)):
             open_idx = match.start() + match.group(0).rindex("(")
             add("", match.group(2), match.group(3), match.start(), open_idx, extra_mw=match.group(1))
     return routes
@@ -395,7 +395,7 @@ def _ruby_def(code: str, name: str) -> str:
 def _rails_filters(code: str, action: str) -> tuple[list[str], list[str]]:
     """(before_action names that apply to this action, skip_before_action names that apply)."""
     applied, skipped = [], []
-    for match in re.finditer(r"(?m)^\s*(skip_)?before_action\s+(.*)$", code):
+    for match in capped(re.finditer(r"(?m)^\s*(skip_)?before_action\s+(.*)$", code)):
         rest = match.group(2)
         only, exclude = _rails_list(rest, "only"), _rails_list(rest, "except")
         if (only is not None and action not in only) or (exclude is not None and action in exclude):
@@ -406,7 +406,7 @@ def _rails_filters(code: str, action: str) -> tuple[list[str], list[str]]:
 
 
 def rails_routes(index: FileIndex) -> list[Route]:
-    routes_files = [rel for rel in index.iter({".rb"}) if rel.endswith("config/routes.rb")]
+    routes_files = [rel for rel in index.sources({".rb"}) if rel.endswith("config/routes.rb")]
     if not routes_files:
         return []
     gems = "\n".join(index.read(rel) or "" for rel in index.iter(names={"Gemfile"}))
@@ -417,7 +417,7 @@ def rails_routes(index: FileIndex) -> list[Route]:
         controllers: dict[str, str] = {}
         by_class: dict[str, str] = {}
         base = f"{root}app/controllers/"
-        for rel in index.iter({".rb"}):
+        for rel in index.sources({".rb"}):
             if rel.startswith(base) and rel.endswith("_controller.rb"):
                 controllers[rel[len(base): -len("_controller.rb")]] = rel
                 match = re.search(r"class\s+([\w:]+)", index.read(rel) or "")
@@ -492,7 +492,7 @@ def _php_method(code: str, name: str) -> tuple[str, int]:
 
 
 def laravel_routes(index: FileIndex) -> list[Route]:
-    php = [rel for rel in index.iter({".php"})]
+    php = [rel for rel in index.sources({".php"})]
     route_files = [rel for rel in php if re.search(r"(?:^|/)routes/[^/]+\.php$", rel) and not rel.endswith(("console.php", "channels.php"))]
     if not route_files:
         return []
@@ -505,7 +505,7 @@ def laravel_routes(index: FileIndex) -> list[Route]:
         code = strip_comments(index.read(rel) or "", quotes="'\"")
         api_prefix = "/api" if rel.endswith("routes/api.php") else ""
         groups = []  # (start, end, prefix, middleware text, controller)
-        for match in LARAVEL_GROUP.finditer(code):
+        for match in capped(LARAVEL_GROUP.finditer(code)):
             brace = match.end() - 1
             end = match_bracket(code, brace, quotes="'\"")
             if end < 0:
@@ -515,7 +515,7 @@ def laravel_routes(index: FileIndex) -> list[Route]:
             mw = re.search(r"middleware['\"]?\s*(?:=>|\()\s*(\[[^\]]*\]|['\"][^'\"]*['\"])", head)
             ctrl = re.search(r"controller\(\s*(\w+)::class", head)
             groups.append((brace, end, prefix.group(1) if prefix else "", mw.group(1) if mw else "", ctrl.group(1) if ctrl else ""))
-        for match in LARAVEL_VERB.finditer(code):
+        for match in capped(LARAVEL_VERB.finditer(code)):
             verb = match.group(1)
             open_idx = match.end() - 2
             while code[open_idx] != "(":
@@ -601,13 +601,13 @@ ASP_GROUP = re.compile(r"\b(?:var\s+)?(\w+)\s*=\s*(\w+)\.MapGroup\(\s*\"([^\"]*)
 
 
 def aspnet_routes(index: FileIndex) -> list[Route]:
-    files = {rel: strip_comments(index.read(rel) or "", quotes='"') for rel in index.iter({".cs"})}
+    files = {rel: strip_comments(index.read(rel) or "", quotes='"') for rel in index.sources({".cs"})}
     everything = "\n".join(files.values())
     fallback_auth = bool(re.search(r"FallbackPolicy\s*=[^;]*RequireAuthenticatedUser|MapControllers\(\)\s*\.\s*RequireAuthorization", everything))
     global_rate = "GlobalLimiter" in everything and "UseRateLimiter" in everything
     routes = []
     for rel, code in files.items():
-        for cls in re.finditer(r"\bclass\s+(\w+)\s*(?:\([^)]*\)\s*)?(?::\s*([^{]+))?\{", code):
+        for cls in capped(re.finditer(r"\bclass\s+(\w+)\s*(?:\([^)]*\)\s*)?(?::\s*([^{]+))?\{", code)):
             bases = cls.group(2) or ""
             head_start = max(code.rfind("}", 0, cls.start()), code.rfind(";", 0, cls.start()), 0)
             head = code[head_start: cls.start()]
@@ -623,7 +623,7 @@ def aspnet_routes(index: FileIndex) -> list[Route]:
             class_public = bool(re.search(r"\[AllowAnonymous\b", head))
             api_controller = "[ApiController]" in head
             previous = 0
-            for match in ASP_VERB.finditer(body):
+            for match in capped(ASP_VERB.finditer(body)):
                 sig = re.search(r"\b(\w+)\s*\(", re.sub(r"\[[^\]]*\]", lambda m: " " * len(m.group(0)), body[match.end():]))
                 if not sig:
                     continue
@@ -653,10 +653,10 @@ def aspnet_routes(index: FileIndex) -> list[Route]:
                     validated=True if api_controller and typed_body else None,
                 ))
         groups: dict[str, tuple[str, str]] = {}
-        for match in ASP_GROUP.finditer(code):
+        for match in capped(ASP_GROUP.finditer(code)):
             parent = groups.get(match.group(2), ("", ""))
             groups[match.group(1)] = (_join(parent[0], match.group(3)), parent[1] + match.group(4))
-        for match in ASP_MAP.finditer(code):
+        for match in capped(ASP_MAP.finditer(code)):
             open_idx = code.index("(", match.start() + len(match.group(1)) + 1)
             close = match_bracket(code, open_idx, quotes='"')
             if close < 0:

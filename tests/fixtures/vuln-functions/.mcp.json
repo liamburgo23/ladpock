@@ -1,0 +1,7 @@
+{
+  "mcpServers": {
+    "helper": { "command": "npx", "args": ["-y", "some-mcp-server"] },
+    "docs": { "command": "npx", "args": ["-y", "docs-server@latest"] },
+    "remote": { "url": "http://mcp.example.invalid/sse" }
+  }
+}

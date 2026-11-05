@@ -306,6 +306,26 @@ because reports travel.
 reach the script through the environment, never by interpolation, which is the injection LP-SUP-006 looks for. CI runs it
 against this repository. Annotations carry only check titles, fixes and paths, escaped for workflow commands, never snippets.
 
+## Code and running app agreeing, and slow input (0.13.0)
+
+**Correlation (`probe.correlate`).** Static analysis guesses and live checks observe, so when both have looked at the same route the
+live result wins. The join is on the finding's snippet, which for route checks is `METHOD /path`, the key `run_probe` records outcomes
+under. Refused with no login: `LP-AUTHZ-001`, `007`, `LP-ABUSE-010`, `LP-API-003` and `004` drop to low confidence, which also relaxes
+the grade limit, and say why. Answered: they become high confidence. `LP-AUTHZ-002` takes the same treatment from the two-account check.
+Confidence and message aren't part of a finding's ref, so accepted risks and "fixed since last scan" still match.
+
+Findings aren't deleted on a refusal. A 401 could come from a dev-only guard, or a login redirect could hide a bug further in, so it stays
+as something to check. Only routes that were actually called change, so a DELETE beside a checked GET keeps its own result.
+
+**Slow input.** A stress test found `trpc_routes` taking 73 seconds on one crafted file, and Spring and Convex not finishing at all: a
+regex with `[\s\S]*`, and bracket matching re-run from every match to the end of the file. Three limits, in `jsparse` and `files`:
+`FileIndex.sources()` (no huge or minified files), `match_bracket` stopping at `MAX_BLOCK`, and `capped()` on repeated searches.
+Whole-file regexes use bounded repeats. `tests/test_slow_input.py` keeps the worst cases as a regression test.
+
+**Supply chain.** These look at how attacks reach you now rather than at known-bad versions. MCP servers run with your credentials and
+fetch their newest release on each start, so `npx -y server` with no version is a standing risk (`LP-SUP-011`). `.vscode/tasks.json`
+with `runOn: folderOpen`, devcontainer commands and AI tool hooks can run code when a project is opened (`LP-SUP-012`).
+
 ## Next milestones
 
 1. **Paid online scanners.** Optional integrations with commercial scanners using your own account, behind the same

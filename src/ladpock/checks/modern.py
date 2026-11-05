@@ -8,6 +8,7 @@ none of them is about one framework, so each has a pattern per language.
 from __future__ import annotations
 
 import re
+from itertools import islice
 from typing import Iterator
 
 from ..files import CODE_EXT, JS_EXT, PY_EXT, basename
@@ -95,12 +96,12 @@ def ai_cost_from_request(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]
                 yield ctx.finding(info, rel, lineno, line)
 
 
-_USER_VALUE = r"[^}]*\b(?:req|request|body|input|args|query|params|user|prompt|message|messages|userInput|user_input)\b"
+_USER_VALUE = r"[^}]{0,300}\b(?:req|request|body|input|args|query|params|user|prompt|message|messages|userInput|user_input)\b"
 _SYSTEM_PROMPT = [
-    re.compile(rf"""role\s*:\s*['"]system['"]\s*,\s*content\s*:\s*`[^`]*\$\{{{_USER_VALUE}"""),
-    re.compile(rf"""\bsystem(?:Prompt|Instruction)?\s*:\s*`[^`]*\$\{{{_USER_VALUE}"""),
-    re.compile(rf"""['"]role['"]\s*:\s*['"]system['"]\s*,\s*['"]content['"]\s*:\s*f['"][^'"]*\{{{_USER_VALUE}"""),
-    re.compile(rf"""\bsystem(?:_prompt|_instruction)?\s*=\s*f['"][^'"]*\{{{_USER_VALUE}"""),
+    re.compile(rf"""role\s*:\s*['"]system['"]\s*,\s*content\s*:\s*`[^`]{{0,5000}}\$\{{{_USER_VALUE}"""),
+    re.compile(rf"""\bsystem(?:Prompt|Instruction)?\s*:\s*`[^`]{{0,5000}}\$\{{{_USER_VALUE}"""),
+    re.compile(rf"""['"]role['"]\s*:\s*['"]system['"]\s*,\s*['"]content['"]\s*:\s*f['"][^'"]{{0,5000}}\{{{_USER_VALUE}"""),
+    re.compile(rf"""\bsystem(?:_prompt|_instruction)?\s*=\s*f['"][^'"]{{0,5000}}\{{{_USER_VALUE}"""),
 ]
 
 
@@ -115,6 +116,8 @@ _SYSTEM_PROMPT = [
 def ai_system_prompt_injection(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
     for rel in _ai_files(ctx, JS_EXT | PY_EXT):
         code = ctx.index.read(rel) or ""
+        if len(code) / (code.count("\n") + 1) > 1000:
+            continue  # minified
         for pattern in _SYSTEM_PROMPT:
             for match in pattern.finditer(code):
                 yield ctx.finding(info, rel, line_of(code, match.start()), match.group(0))
@@ -177,8 +180,9 @@ def upload_without_limits(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding
         if not ("multer" in raw or "fileUpload" in raw or "formidable" in raw):
             continue
         code = strip_comments(raw)
-        for match in _MULTER.finditer(code):
-            close = match_bracket(code, match.end() - 1)
+        for match in islice(_MULTER.finditer(code), 50):
+            close = match_bracket(code[match.end() - 1: match.end() + 5000], 0)
+            close = close + match.end() - 1 if close != -1 else -1
             if close == -1:
                 continue
             options = code[match.end(): close]
@@ -214,7 +218,7 @@ _SENSITIVE = re.compile(r"(?i)(?<![\w.])(?:\w+\.)*(?:password|passwd|pwd|client_
 _SENSITIVE_AUTH = re.compile(r"(?i)(?<![\w.])(?:\w+\.)*(?:token|jwt|session|cookies?)\b(?!\s*[\(:=])")
 _LOG_SAFE = re.compile(r"(?i)\b(?:mask\w*|redact\w*|sanitize\w*|hash\w*)\s*\(|\.length\b|!!|\btypeof\b|\bBoolean\(|\bis_?\w+\b|\bhas_?\w+\b|\bbool\(|\blen\(")
 _AUTH_PATH = re.compile(r"(?i)(?:login|signin|sign-in|signup|sign-up|register|password|auth|credential)")
-_WHOLE_BODY = re.compile(r"\bconsole\.\w+\s*\(\s*(?:['\"`][^'\"`]*['\"`]\s*,\s*)?(?:req\.body|body|credentials|req\.headers)\s*\)|"
+_WHOLE_BODY = re.compile(r"\bconsole\.\w+\s*\(\s*(?:['\"`][^'\"`]{0,300}['\"`]\s*,\s*)?(?:req\.body|body|credentials|req\.headers)\s*\)|"
                          r"\b(?:logger\.\w+|print)\s*\(\s*(?:request\.(?:json|form|data|POST)|credentials)\s*\)")
 _STRINGS = re.compile(r"""(f?)"(?:[^"\\\n]|\\.)*"|(f?)'(?:[^'\\\n]|\\.)*'|`(?:[^`\\\n]|\\.)*`""")
 
@@ -341,9 +345,9 @@ regex_check(
 _BUILD_CONFIG = re.compile(r"^(?:vite|webpack|next|vue|nuxt|rollup|craco|astro|svelte|esbuild|rsbuild)\.config\.[cm]?[jt]s$|^(?:webpack|rollup)\..*\.[cm]?[jt]s$")
 _ENV_ALL = re.compile(
     r"""['"]process\.env['"]\s*:\s*(?:JSON\.stringify\(\s*)?(?:process\.env|env)\b|"""
-    r"""\bdefine\s*:\s*\{[^}]*\.\.\.\s*(?:process\.env|env)\b|"""
+    r"""\bdefine\s*:\s*\{[^}]{0,2000}\.\.\.\s*(?:process\.env|env)\b|"""
     r"""\benv\s*:\s*(?:\{\s*\.\.\.\s*process\.env\b|process\.env\b)|"""
-    r"""\bDefinePlugin\(\s*\{[^}]*process\.env\s*\)""")
+    r"""\bDefinePlugin\(\s*\{[^}]{0,2000}process\.env\s*\)""")
 
 
 @check(
@@ -432,11 +436,11 @@ regex_check(
 # ---------- config and leftovers ----------
 
 regex_check(
-    "LP-CFG-009", "Image optimiser accepts any website", "config", Severity.MEDIUM,
+    "LP-CFG-009", "Image optimiser settings are too open", "config", Severity.MEDIUM,
     why="With a wildcard, your server fetches and resizes images from any address on request. People can use it as a free proxy, "
-        "run up your bill, and sometimes reach internal addresses.",
-    fix="List the exact hostnames your images come from.",
-    pattern=r"""\bhostname\s*:\s*['"]\*\*?['"]|\bdomains\s*:\s*\[\s*['"]\*""",
+        "run up your bill, and sometimes reach internal addresses. Allowing SVG lets uploaded images run scripts in your site.",
+    fix="List the exact hostnames your images come from, and leave dangerouslyAllowSVG off.",
+    pattern=r"""\bhostname\s*:\s*['"]\*\*?['"]|\bdomains\s*:\s*\[\s*['"]\*|\bdangerouslyAllowSVG\s*:\s*true\b""",
     exts=JS_EXT, cwe=("CWE-918", "CWE-770"), names={"next.config.js", "next.config.mjs", "next.config.ts", "next.config.cjs"},
 )
 regex_check(
@@ -458,6 +462,72 @@ regex_check(
             r"""\b(?:searchParams|query|params)\.get\(\s*['"](?:paid|premium|upgraded|subscribed)['"]\s*\)""",
     exts=JS_EXT | PY_EXT | PHP | RB, cwe=("CWE-602", "CWE-807"),
 )
+
+regex_check(
+    "LP-VIBE-007", "Code that wipes the database on start or deploy", "vibe", Severity.HIGH,
+    why="This drops or resets data whenever it runs. It's handy while building, and it deletes real customer data the first time "
+        "it runs in production.",
+    fix="Use migrations for schema changes. Keep anything destructive in a separate script that refuses to run against production.",
+    pattern=r"""\.sync\(\s*\{[^}]*\bforce\s*:\s*true|\bdb\.drop_all\(\)|\bBase\.metadata\.drop_all\(|\bdropDatabase\(\)|"""
+            r"""\bprisma\s+(?:db\s+push\s+[^"'\n]*--(?:accept-data-loss|force-reset)|migrate\s+reset)\b|\bsynchronize\s*:\s*true\b|\bdropSchema\s*:\s*true\b|"""
+            r"""\bpython\s+manage\.py\s+flush\b|\brails\s+db:(?:drop|reset)\b|\bphp\s+artisan\s+migrate:fresh\b""",
+    exts=CODE_EXT | frozenset({".json", ".yml", ".yaml", ".toml", ".sh"}), cwe=("CWE-1188",), names={"Procfile", "Makefile", "Dockerfile"},
+    unless=r"(?i)NODE_ENV|isTest|\btest\b|isDev|development",
+)
+
+regex_check(
+    "LP-AUTHZ-011", "Login can be switched off with a setting", "authz", Severity.HIGH,
+    why="A flag that skips sign-in is convenient while building. If it's ever set in production, by mistake or through a leaked "
+        "config, every protected route is open.",
+    fix="Remove it. For local work, use test accounts or a local sign-in provider instead, so the login check always runs.",
+    pattern=r"""\b(?:SKIP|DISABLE|BYPASS|NO|IGNORE)_?(?:AUTH|AUTHENTICATION|LOGIN|AUTHORIZATION)\b|\bAUTH_?(?:DISABLED|BYPASS|OFF)\b""",
+    exts=JS_EXT | PY_EXT | GO | RB | PHP | JVM | CS, cwe=("CWE-489", "CWE-306"),
+)
+
+regex_check(
+    "LP-CFG-010", "Site doesn't insist on HTTPS", "config", Severity.MEDIUM,
+    why="With this off, sign-ins and session cookies can travel unencrypted, where anyone on the same network can read them.",
+    fix="Turn it on for production (config.force_ssl = true, RequireHttpsMetadata = true).",
+    pattern=r"\bconfig\.force_ssl\s*=\s*false\b|\bRequireHttpsMetadata\s*=\s*false\b",
+    exts=RB | CS, cwe=("CWE-319",), unless=r"(?i)IsDevelopment",
+)
+
+regex_check(
+    "LP-CFG-011", "Database console reachable from the web", "config", Severity.HIGH,
+    why="A database console in the web app gives anyone who reaches it direct access to your data, and often a way to run code "
+        "on the server.",
+    fix="Turn it off outside local development, and never allow connections from other machines.",
+    pattern=r"\bspring\.h2\.console\.(?:enabled\s*[=:]\s*true|settings\.web-allow-others\s*[=:]\s*true)\b|\buse_debugger\s*=\s*True\b|"
+            r"\bmountAdminer\b|['\"]/?phpmyadmin['\"]",
+    exts=frozenset({".properties", ".yml", ".yaml"}) | PY_EXT | JS_EXT | PHP, cwe=("CWE-489", "CWE-284"),
+)
+
+_SERVER_CONFIG = re.compile(r"(?i)(?:^|/)(?:nginx[^/]*\.conf|[^/]*\.nginx|default\.conf|httpd\.conf|apache[^/]*\.conf|\.htaccess|Caddyfile)$|(?:^|/)(?:nginx|sites-available|sites-enabled|conf\.d)/[^/]+$")
+_ALIAS_ESCAPE = re.compile(r"\blocation\s+(/[^\s{;]{0,200}[^/\s{;])\s*\{[^}]{0,2000}?\balias\s+[^;\n]{0,500}/\s*;")
+_SERVER_RULES = [
+    (re.compile(r"(?m)^\s*autoindex\s+on\s*;|^\s*Options\s+[^\n]*(?<![-\w])\+?Indexes\b|^\s*file_server\s+browse\b"), Severity.MEDIUM,
+     "This lists every file in the folder to anyone who opens its address."),
+    (re.compile(r"(?m)^\s*ssl_protocols\s+[^;\n]*\b(?:SSLv3|TLSv1(?:\.1)?)(?![.\d])|^\s*SSLProtocol\s+[^\n]*\+(?:SSLv3|TLSv1(?:\.1)?)(?![.\d])"), Severity.MEDIUM,
+     "This allows old versions of TLS with known weaknesses. Use TLSv1.2 and TLSv1.3 only."),
+]
+
+
+@check(
+    "LP-INFRA-006", "Web server settings expose files or weak encryption", "config", Severity.HIGH,
+    why="A location without a trailing slash and an alias with one lets /files../secret.txt walk out of the folder and read "
+        "whatever is beside it.",
+    fix="Make the location and the alias match: both with a trailing slash, or both without.",
+    cwe=("CWE-22", "CWE-548", "CWE-326"),
+)
+def web_server_config(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
+    for rel in ctx.index.iter(pred=lambda path: bool(_SERVER_CONFIG.search(path))):
+        text = ctx.index.read(rel) or ""
+        for match in _ALIAS_ESCAPE.finditer(text):
+            yield ctx.finding(info, rel, line_of(text, match.start()), match.group(0)[:160])
+        for pattern, severity, message in _SERVER_RULES:
+            for match in pattern.finditer(text):
+                yield ctx.finding(info, rel, line_of(text, match.start() + (len(match.group(0)) - len(match.group(0).lstrip()))), match.group(0), severity=severity, message=message)
+
 
 _ARCHIVE = [
     (PY_EXT, re.compile(r"\.extractall\s*\(")),

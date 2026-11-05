@@ -12,7 +12,7 @@ import re
 from typing import Iterator
 
 from .files import JS_EXT, FileIndex
-from .jsparse import line_of, match_bracket, split_args, strip_comments
+from .jsparse import capped, line_of, match_bracket, split_args, strip_comments
 from .routes import (AUTH, DB, METHODS, MUTATING, MUTATION, OWNER, PAID_API, RATE_LIMIT, RLS_CLIENT, SERVICE_ROLE, SIGNATURE,
                      VALIDATION, Middleware, Route, _auth_names, _calls_any)
 from .server_routes import PAID_CALL
@@ -69,7 +69,7 @@ def _assess(route: Route, body: str, module: str, auth_names: set[str], mw: Midd
 
 def _guard(index: FileIndex, pattern: re.Pattern[str]) -> Middleware:
     """A framework's app-wide hook (hooks.server.ts, src/middleware.ts, server/middleware/*), treated like Next.js middleware."""
-    files = [rel for rel in index.iter(CODE) if pattern.search(rel)]
+    files = [rel for rel in index.sources(CODE) if pattern.search(rel)]
     if not files:
         return Middleware()
     text = "\n".join(strip_comments(index.read(rel) or "") for rel in files)
@@ -104,7 +104,7 @@ def _sk_path(segment: str) -> str:
 def sveltekit_routes(index: FileIndex) -> list[Route]:
     mw = _guard(index, re.compile(r"(?:^|/)src/hooks\.server(?:/index)?\.(?:ts|js)$"))
     routes = []
-    for rel in index.iter(CODE):
+    for rel in index.sources(CODE):
         server, page = SK_SERVER.search(rel), SK_PAGE.search(rel)
         if not (server or page):
             continue
@@ -158,11 +158,11 @@ def remix_routes(index: FileIndex) -> list[Route]:
     for rel in ("app/routes.ts", "src/routes.ts"):
         if index.exists(rel):
             base = rel.rsplit("/", 1)[0]
-            for m in RR_CONFIG.finditer(strip_comments(index.read(rel) or "")):
+            for m in capped(RR_CONFIG.finditer(strip_comments(index.read(rel) or ""))):
                 configured[f"{base}/{m.group(2) or m.group(3)}"] = "/" + (m.group(1) or "").strip("/")
     routes = []
     mw = Middleware()
-    for rel in index.iter(CODE):
+    for rel in index.sources(CODE):
         flat = REMIX_FILE.search(rel)
         if not (flat or rel in configured):
             continue
@@ -187,7 +187,7 @@ def nuxt_routes(index: FileIndex) -> list[Route]:
     mw = _guard(index, re.compile(r"(?:^|/)server/middleware/[^/]+\.(?:ts|js|mjs|mts)$"))
     security_module = any("nuxt-security" in (index.read(rel) or "") for rel in index.iter(names={"package.json"}))
     routes = []
-    for rel in index.iter(CODE):
+    for rel in index.sources(CODE):
         match = NUXT_FILE.search(rel)
         if not match:
             continue
@@ -223,7 +223,7 @@ def _astro_path(name: str) -> str:
 def astro_routes(index: FileIndex) -> list[Route]:
     mw = _guard(index, re.compile(r"(?:^|/)src/middleware(?:/index)?\.(?:ts|js|mjs)$"))
     routes = []
-    for rel in index.iter(CODE):
+    for rel in index.sources(CODE):
         endpoint, page = ASTRO_ENDPOINT.search(rel), ASTRO_PAGE.search(rel)
         if endpoint:
             code = strip_comments(index.read(rel) or "")
@@ -243,7 +243,7 @@ def astro_routes(index: FileIndex) -> list[Route]:
                                       _auth_names(code), mw))
         elif ASTRO_ACTIONS.search(rel):
             code = strip_comments(index.read(rel) or "")
-            for match in ASTRO_ACTION.finditer(code):
+            for match in capped(ASTRO_ACTION.finditer(code)):
                 open_idx = match.end() - 1
                 close = match_bracket(code, open_idx)
                 body = code[open_idx: close + 1] if close > 0 else code[open_idx:]

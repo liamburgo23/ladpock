@@ -1,0 +1,6 @@
+{
+  "mcpServers": {
+    "helper": { "command": "npx", "args": ["-y", "some-mcp-server@1.2.3"] },
+    "local": { "url": "http://localhost:3333/sse" }
+  }
+}

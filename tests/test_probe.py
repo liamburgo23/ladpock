@@ -5,6 +5,7 @@ from __future__ import annotations
 import html
 import http.server
 import json
+import tempfile
 import threading
 import unittest
 from pathlib import Path
@@ -523,6 +524,72 @@ class TwoAccountChecks(unittest.TestCase):
                 stored = b"".join(p.read_bytes() for p in Path(home.name).rglob("*") if p.is_file())
                 for secret in (b"alice-cookie", b"bob-token"):
                     self.assertNotIn(secret, stored)
+        finally:
+            server.shutdown()
+            server.server_close()
+            db.close()
+            home.cleanup()
+
+
+class Correlation(unittest.TestCase):
+    """What the running app did, applied to what the code looked like."""
+
+    def finding(self, check_id, snippet, confidence="medium"):
+        from ladpock.models import Finding, Severity
+        return Finding(check_id, "t", Severity.HIGH, "authz", message="Base.", snippet=snippet, confidence=confidence)
+
+    def test_refused_without_login_lowers_confidence(self):
+        result = probe.ProbeResult("http://x", route_outcomes={"GET /api/invoices": "refused"})
+        f = self.finding("LP-AUTHZ-007", "GET /api/invoices")
+        probe.correlate([f], result)
+        self.assertEqual((f.confidence, f.extra["live"]), ("low", "refused"))
+        self.assertIn("refused", f.message)
+
+    def test_answered_without_login_confirms(self):
+        result = probe.ProbeResult("http://x", route_outcomes={"GET /api/invoices": "answered"})
+        f = self.finding("LP-AUTHZ-007", "GET /api/invoices", "low")
+        probe.correlate([f], result)
+        self.assertEqual((f.confidence, f.extra["live"]), ("high", "confirmed"))
+
+    def test_two_accounts_settle_ownership(self):
+        result = probe.ProbeResult("http://x", account_outcomes={"GET /a/[id]": "protected", "GET /b/[id]": "exposed"})
+        a, b, c = (self.finding("LP-AUTHZ-002", s) for s in ("GET /a/[id]", "GET /b/[id]", "DELETE /a/[id]"))
+        probe.correlate([a, b, c], result)
+        self.assertEqual((a.confidence, b.confidence, c.confidence), ("low", "high", "medium"))  # DELETE wasn't tried
+        self.assertEqual(c.extra, {})
+
+    def test_other_checks_and_routes_are_left_alone(self):
+        result = probe.ProbeResult("http://x", route_outcomes={"GET /x": "refused"})
+        other, elsewhere = self.finding("LP-INJ-003", "GET /x"), self.finding("LP-AUTHZ-007", "GET /y")
+        fingerprint = other.fingerprint
+        probe.correlate([other, elsewhere], result)
+        self.assertEqual((other.confidence, elsewhere.confidence), ("medium", "medium"))
+        self.assertEqual(other.fingerprint, fingerprint)
+
+    def test_refs_dont_change(self):
+        # Accepted risks are stored by ref, so changing a finding's confidence or message mustn't change its ref.
+        result = probe.ProbeResult("http://x", route_outcomes={"GET /x": "refused"})
+        f = self.finding("LP-AUTHZ-007", "GET /x")
+        before = f.fingerprint
+        probe.correlate([f], result)
+        self.assertEqual(f.fingerprint, before)
+
+    def test_end_to_end(self):
+        home = isolated_home()
+        db = DB()
+        server, url = serve(Hardened)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp) / "demo"
+                (root / "app/api/invoices").mkdir(parents=True)
+                (root / "next.config.js").write_text("")
+                (root / "app/api/invoices/route.ts").write_text(
+                    'import { db } from "@/lib/db";\nexport async function GET() { return Response.json(await db.invoice.findMany({ take: 5 })); }\n')
+                before = run_scan(root, db, offline=True, external=False, log=lambda _: None)
+                after = run_scan(root, db, offline=True, external=False, log=lambda _: None, live_url=url)
+                pick = lambda r: next(f for f in r.findings if f.check_id == "LP-AUTHZ-007")
+                self.assertEqual(pick(after).extra["live"], "refused")  # Hardened answers 401 to everything under /api/
+                self.assertEqual(pick(before).fingerprint, pick(after).fingerprint)
         finally:
             server.shutdown()
             server.server_close()

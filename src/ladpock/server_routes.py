@@ -15,7 +15,7 @@ import re
 from dataclasses import dataclass, field
 
 from .files import JS_EXT, PY_EXT, FileIndex
-from .jsparse import line_of, match_bracket, split_args, strip_comments
+from .jsparse import capped, line_of, match_bracket, split_args, strip_comments
 
 # ---------- shared ----------
 
@@ -93,7 +93,7 @@ class JsHandler:
 def _js_server_files(index: FileIndex) -> dict[str, str]:
     """Comment-stripped code of the files that set up a JS server, a router or a Nest controller."""
     out = {}
-    for rel in index.iter(JS_EXT - {".vue", ".svelte", ".astro"}):
+    for rel in index.sources(JS_EXT - {".vue", ".svelte", ".astro"}):
         if re.search(r"(?:^|/)app/(?:.*/)?route\.\w+$|(?:^|/)pages/api/", rel):
             continue  # Next.js handlers have their own analyser
         text = index.read(rel) or ""
@@ -106,7 +106,7 @@ def _js_functions(files: dict[str, str]) -> dict[str, JsHandler]:
     """Named functions in server files, so `router.post('/x', controller.create)` can be followed to its body."""
     found: dict[str, JsHandler] = {}
     for rel, code in files.items():
-        for match in FN_DEF.finditer(code):
+        for match in capped(FN_DEF.finditer(code)):
             name = next(g for g in match.groups() if g)
             if name in ("if", "for", "while", "switch", "catch", "function"):
                 continue
@@ -131,7 +131,7 @@ class _Scope:
 def _js_scope(code: str) -> _Scope:
     """App- or router-wide middleware: app.use(auth), fastify.register(rateLimit), app.use('/api/*', jwt(...))."""
     scope = _Scope()
-    for match in JS_USE.finditer(code):
+    for match in capped(JS_USE.finditer(code)):
         open_idx = match.end() - 1
         close = match_bracket(code, open_idx)
         if close < 0:
@@ -207,7 +207,7 @@ def _js_mounts(files: dict[str, str]) -> dict[str, tuple[str, bool]]:
     mounts: dict[str, tuple[str, bool]] = {}
     for rel, code in files.items():
         scope = _js_scope(code)
-        for match in re.finditer(r"\b\w+\.(use|register|route)\s*\(", code):
+        for match in capped(re.finditer(r"\b\w+\.(use|register|route)\s*\(", code)):
             open_idx = match.end() - 1
             close = match_bracket(code, open_idx)
             if close < 0:
@@ -264,7 +264,7 @@ def js_routes(index: FileIndex, route_cls) -> list:
             # Fastify: app.post('/x', { preHandler: [auth], schema }, handler)
             return middleware, last
 
-        for match in JS_ROUTE.finditer(code):
+        for match in capped(JS_ROUTE.finditer(code)):
             receiver, method, path = match.group(1), match.group(2), match.group(4)
             if receiver in ("axios", "http", "https", "fetch", "got", "ky", "superagent", "request", "api", "client", "$http"):
                 continue
@@ -280,7 +280,7 @@ def js_routes(index: FileIndex, route_cls) -> list:
             kind = "fastify" if "fastify" in code[:2000] else "hono" if "hono" in code[:2000] else "express"
             routes.append(_js_route(route_cls, method, path, rel, line_of(code, match.start()), kind, middleware, body,
                                     code, scope, match.start()))
-        for match in JS_ROUTE_CHAIN.finditer(code):
+        for match in capped(JS_ROUTE_CHAIN.finditer(code)):
             path = match.group(3)
             pos = match.end()
             while True:
@@ -297,7 +297,7 @@ def js_routes(index: FileIndex, route_cls) -> list:
                 routes.append(_js_route(route_cls, method, path, rel, line_of(code, match.start()), "express", middleware,
                                         body, code, scope, match.start()))
                 pos = close + 1
-        for match in JS_ROUTE_OBJECT.finditer(code):
+        for match in capped(JS_ROUTE_OBJECT.finditer(code)):
             open_idx = match.end() - 1
             close = match_bracket(code, open_idx)
             if close < 0:
@@ -320,7 +320,7 @@ def js_routes(index: FileIndex, route_cls) -> list:
 
 def _nest_routes(route_cls, rel: str, code: str, global_auth: bool, global_validation: bool, global_rate: bool) -> list:
     routes = []
-    for ctrl in NEST_CONTROLLER.finditer(code):
+    for ctrl in capped(NEST_CONTROLLER.finditer(code)):
         prefix = ctrl.group(1) or ctrl.group(2) or ""
         class_at = code.find("class ", ctrl.end())
         brace = code.find("{", class_at)
@@ -334,7 +334,7 @@ def _nest_routes(route_cls, rel: str, code: str, global_auth: bool, global_valid
         class_public = bool(NEST_PUBLIC.search(head))
         class_rate = bool(NEST_RATE.search(head))
         previous = 0
-        for match in NEST_METHOD.finditer(body):
+        for match in capped(NEST_METHOD.finditer(body)):
             name = re.search(r"(?<![@\w.])(?:async\s+)?(\w+)\s*\(", body[match.end():])
             if not name:
                 continue
@@ -535,7 +535,7 @@ def _py_strip(code: str) -> str:
 
 def python_routes(index: FileIndex, route_cls) -> list:
     files = {}
-    for rel in index.iter(PY_EXT):
+    for rel in index.sources(PY_EXT):
         text = index.read(rel) or ""
         if re.search(r"^\s*(?:from|import)\s+(?:fastapi|flask|django|rest_framework|starlette|quart|sanic)\b", text, re.M):
             files[rel] = _py_strip(text)
@@ -556,7 +556,7 @@ def python_routes(index: FileIndex, route_cls) -> list:
         for fn in py_functions(code):
             decorators = fn.decorators
             matched = False
-            for deco in PY_ROUTE_DECORATOR.finditer(decorators):
+            for deco in capped(PY_ROUTE_DECORATOR.finditer(decorators)):
                 matched = True
                 receiver, verb, path = deco.group(1), deco.group(2), deco.group(4)
                 if verb == "route":
@@ -579,7 +579,7 @@ def python_routes(index: FileIndex, route_cls) -> list:
             if matched or not re.search(r"^\s*from\s+(?:django|rest_framework)\b", code, re.M):
                 continue
             routes.extend(_django_view(route_cls, rel, fn, code, django_urls, drf_default_auth))
-        for viewset in re.finditer(r"(?m)^class\s+(\w+)\(([^)]*ModelViewSet[^)]*)\):", code):
+        for viewset in capped(re.finditer(r"(?m)^class\s+(\w+)\(([^)]*ModelViewSet[^)]*)\):", code)):
             # Router-registered viewsets expose list/create/update/delete without any method being written out.
             body = _class_body(code, viewset.group(1), full=True)
             if re.search(r"(?m)^\s+def\s+(?:create|update|partial_update|destroy)\(", body):
@@ -614,11 +614,11 @@ def _django_urls(files: dict[str, str]) -> dict[str, str]:
     mapping: dict[str, str] = {}
     for rel in url_files:
         code = files[rel]
-        for m in re.finditer(r"(?:re_)?path\(\s*r?['\"]([^'\"]*)['\"]\s*,\s*([\w.]+)", code):
+        for m in capped(re.finditer(r"(?:re_)?path\(\s*r?['\"]([^'\"]*)['\"]\s*,\s*([\w.]+)", code)):
             view = m.group(2).rsplit(".", 1)[-1]
             if view not in ("include",):
                 mapping.setdefault(view, join(prefixes.get(rel, ""), m.group(1).lstrip("^").rstrip("$")))
-        for m in re.finditer(r"register\(\s*r?['\"]([^'\"]*)['\"]\s*,\s*([\w.]+)", code):
+        for m in capped(re.finditer(r"register\(\s*r?['\"]([^'\"]*)['\"]\s*,\s*([\w.]+)", code)):
             mapping.setdefault(m.group(2).rsplit(".", 1)[-1],
                                join(prefixes.get(rel, ""), router_prefix.get(rel, ""), m.group(1) + "/"))
     return mapping

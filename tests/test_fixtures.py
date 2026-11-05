@@ -58,6 +58,8 @@ EXPECTED_FUNCTIONS = {
     "LP-AUTHZ-007", "LP-AUTHZ-008", "LP-AUTHZ-009", "LP-AUTHZ-010", "LP-SEC-008", "LP-SEC-009", "LP-AUTH-012", "LP-AUTH-013",
     "LP-AUTH-014", "LP-AUTH-015", "LP-CRYPTO-003", "LP-CFG-009", "LP-VIBE-006", "LP-PAY-003", "LP-INJ-013", "LP-ABUSE-012",
     "LP-ABUSE-013", "LP-API-003", "LP-API-004", "LP-SUPA-005", "LP-SUPA-006", "LP-SUPA-007", "LP-SUPA-008", "LP-SUPA-009",
+    "LP-VIBE-007", "LP-AUTHZ-011", "LP-CFG-010", "LP-CFG-011", "LP-INFRA-006", "LP-SUP-008", "LP-SUP-009", "LP-SUP-010", "LP-SUP-011",
+    "LP-SUP-012", "LP-SUP-013",
 }
 # Produced only with network access or git, covered by their own tests.
 NOT_IN_OFFLINE_FIXTURE = {"LP-SEC-004", "LP-DEP-001", "LP-SUP-005"} | {f"LP-LIVE-{i:03d}" for i in range(1, 17)}  # live: test_probe

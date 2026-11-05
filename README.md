@@ -27,7 +27,7 @@ CRITICAL (6)
 
 ## What it does
 
-- **162 built-in checks** across secrets, sign-in, authorization, API abuse and cost, injection, payments,
+- **173 built-in checks** across secrets, sign-in, authorization, API abuse and cost, injection, payments,
   crypto, config, supply chain, and AI-generated code smells. Run `ladpock checks` for the list, or see
   [docs/CHECKS.md](docs/CHECKS.md).
 - **A route matrix** for Next.js (App Router, Pages API and server actions), SvelteKit, Remix, Nuxt, Astro, Express,
@@ -41,6 +41,9 @@ CRITICAL (6)
   passwords and tokens in logs; roles, IDs and paid status taken from the request or the browser; every environment
   variable copied into the front end; leftover debug and seed endpoints; and Supabase and Firebase rules that only check
   someone is signed in.
+- **Supply-chain checks for how attacks work now:** install scripts that download code, packages from outside the registry,
+  AI tool servers with no fixed version, projects that run a command as soon as you open them, and build scripts that pipe a
+  download into a shell.
 - **Infrastructure checks** for Dockerfiles, Docker Compose, Kubernetes manifests, Terraform and GitHub Actions:
   root containers, baked-in secrets, privileged or host-mounted containers, databases published to the internet,
   public buckets, open firewalls, wildcard IAM policies and workflow script injection.
@@ -299,6 +302,9 @@ the line of code that defines them. It also checks security headers, session coo
 files that should never be served (`.env`, `.git`, cloud credentials, private keys, Spring actuator, phpinfo, SQL dumps),
 folder listings, public API docs, stack traces in error pages, and whether 20 failed sign-ins in a row get slowed down.
 
+Where the code and the running app disagree, the finding says so. If the code looks unprotected but the app refuses the
+request, the finding drops to low confidence and tells you why; if the app answers, it's marked as confirmed.
+
 It also sends a few harmless probes, all GET requests: a marker in the query string to see if it comes back as raw HTML,
 a stray quote to see if it causes a database syntax error, and a made-up address in redirect parameters (redirects are
 never followed). For the most realistic results, run a production build locally.
@@ -344,7 +350,7 @@ won't replace an existing hook unless you pass `--force`; `ladpock hook remove` 
 ### In CI
 
 ```yaml
-- uses: liamburgo23/ladpock@v0.12.0
+- uses: liamburgo23/ladpock@v0.13.0
   with:
     fail-on: high   # critical, high, medium or low; leave empty to never fail
 ```
@@ -391,6 +397,9 @@ masked, and your folder path isn't included. It does contain code snippets, so s
 Each scan says which stacks got deep checks, so you know how thorough it was.
 
 ## Honest limits
+
+Analysis that reads code's structure skips files over 400 KB and minified files, and stops at 300 routes per file. That's what
+keeps a huge bundle or a hostile file from stalling a scan. Line-by-line checks, including secret detection, still read them.
 
 LadPock catches common, recognisable mistakes. It doesn't understand your business logic, can't see your
 production configuration or dashboard settings, and its route analysis is heuristic: it recognises common

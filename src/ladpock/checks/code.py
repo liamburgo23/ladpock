@@ -76,7 +76,8 @@ regex_check(
     why="Accepting unsigned or expired tokens lets anyone forge a login.",
     fix="Always verify signature and expiry, and pin the algorithm you expect (for example algorithms: ['HS256']).",
     pattern=r"algorithms\s*[:=]\s*\[?\s*['\"]none['\"]|['\"]verify_signature['\"]\s*:\s*False|ignoreExpiration\s*:\s*true|"
-            r"verify_exp['\"]\s*:\s*False",
+            r"verify_exp['\"]\s*:\s*False|\bValidate(?:IssuerSigningKey|Lifetime|Issuer|Audience)\s*=\s*false\b|\bRequireSignedTokens\s*=\s*false\b|"
+            r"\bParseUnverified\(|\.parseUnverified\(|\bJWT\.decode\([^)\n]*,\s*(?:nil|false)\s*,\s*false",
     cwe=("CWE-347",),
 )
 
@@ -119,7 +120,7 @@ regex_check(
     why="Without HttpOnly, scripts can read the cookie. Without Secure, it can travel over plain HTTP.",
     fix="Set httpOnly: true, secure: true (in production) and sameSite: 'lax' or 'strict' on session cookies.",
     pattern=r"(?i)\b(?:httpOnly|http_only)\s*[:=]\s*false\b|\bsecure\s*[:=]\s*false\b|"
-            r"\b(?:SESSION|CSRF)_COOKIE_(?:SECURE|HTTPONLY)\s*=\s*False\b",
+            r"\b(?:SESSION|CSRF)_COOKIE_(?:SECURE|HTTPONLY)\s*=\s*False\b|['\"](?:secure|http_only)['\"]\s*=>\s*false\b",
     near_pattern=r"(?i)cookie", window=6, cwe=("CWE-614", "CWE-1004"),
 )
 

@@ -10,8 +10,21 @@ lifetime ('_, 'a) rather than a string.
 
 from __future__ import annotations
 
+from itertools import islice
+from typing import Iterable, Iterator, TypeVar
+
 _PAIRS = {"(": ")", "{": "}", "[": "]"}
 _QUOTES = "'\"`"
+# Scanned code can be huge or written to be slow. Nobody hand-writes a block longer than this, or this many routes in one
+# file, so these limits only ever cut short something generated or hostile.
+MAX_BLOCK = 100_000
+MAX_MATCHES = 300
+T = TypeVar("T")
+
+
+def capped(matches: Iterable[T]) -> Iterator[T]:
+    """Stop a repeated search after MAX_MATCHES, so the work done for each match can't add up without limit."""
+    return islice(matches, MAX_MATCHES)
 
 
 def strip_comments(code: str, quotes: str = _QUOTES) -> str:
@@ -67,9 +80,9 @@ def strip_comments(code: str, quotes: str = _QUOTES) -> str:
 
 
 def match_bracket(code: str, open_idx: int, quotes: str = _QUOTES) -> int:
-    """Index of the bracket closing the one at ``open_idx``, or -1."""
+    """Index of the bracket closing the one at ``open_idx``, or -1 if there isn't one within MAX_BLOCK."""
     stack: list[str] = []
-    i, n = open_idx, len(code)
+    i, n = open_idx, min(len(code), open_idx + MAX_BLOCK)
     state: str | None = None
     while i < n:
         c = code[i]

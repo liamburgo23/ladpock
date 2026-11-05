@@ -81,7 +81,11 @@ follows; a change that breaks one is a security bug.
    only sends GET requests, whatever the write option says. Record IDs read from the app only go into a URL if they
    contain nothing that could change the path.
 
-13. **The MCP server and the git hook only read.** `ladpock mcp` talks JSON-RPC over stdin/stdout to the client
+13. **Scanned code can't stall a scan by being large or crafted to be slow.** Structural analysis skips files over 400 KB and
+   minified files, bracket matching stops after 100 KB, and repeated searches stop after 300 matches per file. Patterns that
+   read across a whole file have bounded repeats. `tests/test_slow_input.py` runs the worst cases we know of.
+
+14. **The MCP server and the git hook only read.** `ladpock mcp` talks JSON-RPC over stdin/stdout to the client
    that started it. Its tools scan, list findings and build fix prompts; none edits code or settings, and results
    are masked like every other report. `ladpock hook install` writes one pre-commit hook. It refuses to overwrite
    an existing hook unless told to, keeps a backup, and restores it on removal.

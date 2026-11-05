@@ -19,9 +19,9 @@ POLICY_CMD = re.compile(r"(?is)\bfor\s+(all|select|insert|update|delete)\b")
 ANY_SIGNED_IN = re.compile(r"(?is)auth\.role\(\)\s*=\s*'authenticated'|auth\.uid\(\)\s+is\s+not\s+null|\bto\s+authenticated\b[^;]*\b(?:using|with\s+check)\s*\(\s*true\s*\)")
 OWNER_RULE = re.compile(r"(?is)auth\.uid\(\)\s*=|=\s*\(?\s*(?:select\s+)?auth\.uid\(\)|\bowner\b")
 FUNCTION_START = re.compile(r"(?is)create\s+(?:or\s+replace\s+)?function\s+((?:\"?\w+\"?\.)?\"?\w+\"?)")
-VIEW = re.compile(r"(?is)create\s+(?:or\s+replace\s+)?(?:materialized\s+)?view\s+((?:\"?\w+\"?\.)?\"?\w+\"?)([^;]*);")
-BUCKET_PUBLIC = re.compile(r"(?is)insert\s+into\s+storage\.buckets[^;]*\btrue\b|\bcreateBucket\([^)]*\bpublic\s*:\s*true")
-STORAGE_POLICY = re.compile(r"(?is)create\s+policy\s+.+?\s+on\s+storage\.objects\b(.*)")
+VIEW = re.compile(r"(?is)create\s+(?:or\s+replace\s+)?(?:materialized\s+)?view\s+((?:\"?\w+\"?\.)?\"?\w+\"?)([^;]{0,20000});")
+BUCKET_PUBLIC = re.compile(r"(?is)insert\s+into\s+storage\.buckets[^;]{0,2000}\btrue\b|\bcreateBucket\([^)]{0,500}\bpublic\s*:\s*true")
+STORAGE_POLICY = re.compile(r"(?is)create\s+policy\s+.{1,300}?\s+on\s+storage\.objects\b(.*)")
 
 
 def _table(name: str) -> tuple[str, str]:

@@ -74,8 +74,11 @@ def _finding(f: dict) -> str:
     if place and f.get("line"):
         place = f"{place}:{f['line']}"
     tags = []
-    if f.get("source") == "live":
+    seen_live = (f.get("extra") or {}).get("live")
+    if f.get("source") == "live" or seen_live == "confirmed":
         tags.append("Confirmed on the running app")
+    elif seen_live == "refused":
+        tags.append("The running app refused this")
     elif f.get("confidence") == "low":
         tags.append("Unconfirmed, worth checking")
     tags.extend(str(c) for c in (f.get("cwe") or ())[:3])

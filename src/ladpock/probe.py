@@ -274,6 +274,8 @@ class ProbeResult:
     notes: list[str] = field(default_factory=list)
     accounts: dict | None = None  # counts from the two-account check, when it ran
     stopped_early: bool = False  # hit the request limit
+    route_outcomes: dict[str, str] = field(default_factory=dict)  # "GET /x" -> refused | answered, with no login
+    account_outcomes: dict[str, str] = field(default_factory=dict)  # "GET /x/[id]" -> exposed | protected, as the other account
 
 
 def check_target(url: str) -> str:
@@ -367,6 +369,35 @@ def _finding(info, route: Route | None, url: str, message: str | None = None, se
                    source="live", cwe=info.cwe, extra={"url": url})
 
 
+# Checks that say nothing in the code stops a caller with no login. Their snippet is "METHOD /path".
+CODE_SAYS_NO_LOGIN = {"LP-AUTHZ-001", "LP-AUTHZ-007", "LP-ABUSE-010", "LP-API-003", "LP-API-004"}
+
+
+def correlate(findings: list[Finding], result: ProbeResult) -> None:
+    """Apply what the running app did to what the code looked like. Reading code is a guess; this is evidence."""
+    for f in findings:
+        if f.source == "live":
+            continue
+        if f.check_id in CODE_SAYS_NO_LOGIN:
+            outcome = result.route_outcomes.get(f.snippet or "")
+            if outcome == "refused":
+                f.confidence, f.extra["live"] = "low", "refused"
+                f.message += (" However, your running app refused this request when it had no login, so something the code analysis "
+                              "can't see may be protecting it. Check that's deliberate, and accept this finding if so.")
+            elif outcome == "answered":
+                f.confidence, f.extra["live"] = "high", "confirmed"
+                f.message += " Confirmed: your running app answered this request with no login."
+        elif f.check_id == "LP-AUTHZ-002":
+            outcome = result.account_outcomes.get(f.snippet or "")
+            if outcome == "protected":
+                f.confidence, f.extra["live"] = "low", "refused"
+                f.message += (" However, when LadPock tried this on your running app with two test accounts, the other account was "
+                              "refused, so the ownership check may be somewhere the code analysis can't see.")
+            elif outcome == "exposed":
+                f.confidence, f.extra["live"] = "high", "confirmed"
+                f.message += " Confirmed: on your running app, one test account opened the other's record here."
+
+
 def parse_login(text: str, label: str) -> dict[str, str]:
     """A session as a request header: 'Cookie: a=b', 'Authorization: Bearer x', 'Bearer x' or a bare 'a=b' cookie."""
     text = (text or "").strip()
@@ -437,6 +468,10 @@ def run_probe(url: str, routes: list[Route], *, include_writes: bool = False, lo
         responses.append((path, resp, route))
         protected = resp.status in (401, 403) or (300 <= resp.status < 400 and "login" in resp.headers.get("location", "").lower())
         public = route.public_path or route.webhook or route.public
+        if protected:
+            result.route_outcomes[f"{route.method} {route.path}"] = "refused"
+        elif 200 <= resp.status < 300 and not _looks_like_page(resp) and resp.body.strip():
+            result.route_outcomes[f"{route.method} {route.path}"] = "answered"
         if 200 <= resp.status < 300 and not protected and not public and not _looks_like_page(resp) and resp.body.strip():
             expected = route.auth in ("yes", "mw", "sig")
             message = (f"{route.method} {route.path} returned {resp.status} with data and no login. "
@@ -802,10 +837,13 @@ class _TwoAccounts:
             exposed = not (_answered(baseline) and _same_answer(baseline, own))
         if not exposed:
             self.stats["protected"] += 1
+            if route:
+                self.result.account_outcomes.setdefault(f"{route.method} {route.path}", "protected")
             return "protected"
         self.stats["exposed"] += 1
         if route:
             self.exposed_routes.add((route.method, route.path))
+            self.result.account_outcomes[f"{route.method} {route.path}"] = "exposed"
         self.result.findings.append(_finding(
             CROSS_ACCOUNT, route, self.base + path, f"{evidence} {CROSS_ACCOUNT.why}",
             snippet=f"GET {path} as account B -> {other.status}, account A's record", confidence="medium" if page else "high"))

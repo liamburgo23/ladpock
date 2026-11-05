@@ -1213,6 +1213,8 @@ function findingEl(f, projectId, verdict, isNew) {
 
   const details = h("details", { class: "finding" },
     h("summary", null, sevPill(f.severity), isNew ? h("span", { class: "chip accent" }, "New") : null,
+      f.source === "live" || (f.extra && f.extra.live === "confirmed") ? h("span", { class: "chip", title: "Seen on your running app, not just in the code" }, "Confirmed live") : null,
+      f.extra && f.extra.live === "refused" ? h("span", { class: "chip", title: "The code looked unprotected, but your running app refused the request" }, "Refused live") : null,
       h("span", { class: "title" }, f.title),
       f.file ? h("span", { class: "mono faint" }, f.line ? `${f.file}:${f.line}` : f.file) : null),
     h("div", { class: "body" },

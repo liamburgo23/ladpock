@@ -12,6 +12,9 @@ slash, like convex/orders:list, which the live checks skip.
 from __future__ import annotations
 
 import re
+from functools import lru_cache
+from itertools import islice
+from typing import Iterator
 
 from .files import FileIndex, basename
 from .jsparse import line_of, match_bracket, strip_comments
@@ -31,13 +34,33 @@ OWNER_MORE = re.compile(r"\b(?:ctx|context|request|req)\.(?:session\??\.)?(?:use
                         r"\bidentity\??\.(?:subject|tokenIdentifier)\b|\buid\b|\buserId\b(?!\s*:\s*(?:input|args|data))")
 
 
-def _module(index: FileIndex, rel: str) -> str:
-    return strip_comments(index.read(rel) or "")
+# Limits, because scanned code can be huge or crafted to be slow. See jsparse.MAX_BLOCK.
+MAX_FUNCTIONS_PER_FILE = 200
+MAX_BODY = 60_000
+
+
+def _sources(index: FileIndex, *needles: str, exts=JS) -> Iterator[tuple[str, str]]:
+    """(file, text) for files worth reading: written by a person, and mentioning what this analyzer looks for."""
+    for rel in index.sources(exts):
+        raw = index.read(rel) or ""
+        if not needles or any(needle in raw for needle in needles):
+            yield rel, raw
+
+
+def _closing(code: str, open_idx: int) -> int:
+    """match_bracket, but it won't read more than a function's worth of text. -1 if it isn't closed by then."""
+    close = match_bracket(code[open_idx: open_idx + MAX_BODY], 0)
+    return open_idx + close if close != -1 else -1
+
+
+@lru_cache(maxsize=4)
+def _names_in(module: str) -> frozenset[str]:
+    return frozenset(_auth_names(module))
 
 
 def _assess(route: Route, body: str, module: str, *, authed: bool = False, validated: bool = False) -> Route:
     """The common questions, once a function's body has been found."""
-    names = _auth_names(module)
+    names = _names_in(module)
     if SIGNATURE.search(body):
         route.auth = "sig"
     elif authed or AUTH.search(body) or PRIVATE_KEY.search(body) or _calls_any(body, names):
@@ -59,7 +82,7 @@ def _assess(route: Route, body: str, module: str, *, authed: bool = False, valid
 # ---------- tRPC ----------
 
 PROCEDURE = re.compile(r"(?m)^[ \t]*(\w+)\s*:\s*((?:\w+\.)*\w*[Pp]rocedure)\b")
-TRPC_FILE = re.compile(r"\b\w*[Pp]rocedure\b[\s\S]*\.(?:query|mutation)\s*\(")
+TRPC_CALL = re.compile(r"\.(?:query|mutation)\s*\(")
 ROUTER_VAR = re.compile(r"(?:const|let|var)\s+(\w+)\s*=\s*(?:createTRPCRouter|router|t\.router|createRouter)\s*\(")
 ROUTER_ENTRY = re.compile(r"(?m)^[ \t]*(\w+)\s*:\s*(\w+)\s*,?\s*$|^[ \t]*(\w+)\s*,\s*$")
 AUTHED_PROCEDURE = re.compile(r"(?i)protected|auth|user|admin|private|member|staff|owner|logged|session|org|team|tenant|paid|premium")
@@ -70,17 +93,15 @@ TRPC_AUTH = re.compile(r"\bctx\.(?:session|user|auth|userId)\b")
 
 def trpc_routes(index: FileIndex) -> list[Route]:
     modules = {}
-    for rel in index.iter(JS):
-        raw = index.read(rel) or ""
-        if "rocedure" in raw or "trpc" in raw.lower():
-            code = strip_comments(raw)
-            if TRPC_FILE.search(code) or (ROUTER_VAR.search(code) and "trpc" in code.lower()):
-                modules[rel] = code
+    for rel, raw in _sources(index, "rocedure", "trpc", "TRPC"):
+        code = strip_comments(raw)
+        if ("rocedure" in code and TRPC_CALL.search(code)) or (ROUTER_VAR.search(code) and "trpc" in code.lower()):
+            modules[rel] = code
     prefixes: dict[str, str] = {}
     for code in modules.values():  # appRouter = router({ order: orderRouter }) gives order.* its URL prefix
-        for match in ROUTER_VAR.finditer(code):
-            open_idx = code.find("{", match.end())
-            close = match_bracket(code, open_idx) if open_idx != -1 else -1
+        for match in islice(ROUTER_VAR.finditer(code), MAX_FUNCTIONS_PER_FILE):
+            open_idx = code.find("{", match.end(), match.end() + 200)
+            close = _closing(code, open_idx) if open_idx != -1 else -1
             if close == -1:
                 continue
             for entry in ROUTER_ENTRY.finditer(code[open_idx: close]):
@@ -89,11 +110,11 @@ def trpc_routes(index: FileIndex) -> list[Route]:
                     prefixes[value] = key
     routes = []
     for rel, code in modules.items():
-        owners = [(m.start(), m.group(1)) for m in ROUTER_VAR.finditer(code)]
-        procedures = list(PROCEDURE.finditer(code))
+        owners = [(m.start(), m.group(1)) for m in islice(ROUTER_VAR.finditer(code), MAX_FUNCTIONS_PER_FILE)]
+        procedures = list(islice(PROCEDURE.finditer(code), MAX_FUNCTIONS_PER_FILE))
         for i, match in enumerate(procedures):
             end = procedures[i + 1].start() if i + 1 < len(procedures) else len(code)
-            body = code[match.start(): end]
+            body = code[match.start(): min(end, match.start() + MAX_BODY)]
             kind = re.search(r"\.(query|mutation|subscription)\s*\(", body)
             if not kind or kind.group(1) == "subscription":
                 continue
@@ -122,19 +143,19 @@ CONVEX_ID_ARG = re.compile(r"\bv\.id\(")
 
 def convex_routes(index: FileIndex) -> list[Route]:
     routes = []
-    for rel in index.iter(JS):
+    for rel, raw in _sources(index):
         if not re.search(r"(?:^|/)convex/", rel) or "/_generated/" in rel or basename(rel).startswith("schema."):
             continue
-        code = _module(index, rel)
+        code = strip_comments(raw)
         name = rel.split("convex/", 1)[-1].rsplit(".", 1)[0]
         wrappers = set(re.findall(r"(?:const|let)\s+(\w+)\s*=\s*custom(?:Query|Mutation|Action)\(", code))
-        for match in CONVEX_FN.finditer(code):
+        for match in islice(CONVEX_FN.finditer(code), MAX_FUNCTIONS_PER_FILE):
             builder = match.group(2)
             kind = CONVEX_KINDS.search(builder)
             if not kind or builder.lower().startswith("internal"):
                 continue  # internal functions can't be called from outside
-            close = match_bracket(code, match.end() - 1)
-            body = code[match.end(): close] if close != -1 else code[match.end():]
+            close = _closing(code, match.end() - 1)
+            body = code[match.end(): close] if close != -1 else code[match.end(): match.end() + MAX_BODY]
             route = Route("GET" if kind.group(1).lower() == "query" else "POST", f"convex/{name}:{match.group(1)}", rel,
                           line_of(code, match.start()), "convex")
             # Wrappers like authedQuery or customQuery are how Convex apps usually add a login check.
@@ -165,21 +186,20 @@ GQL_AUTH = re.compile(r"\b(?:ctx|context|contextValue)\.(?:user|session|auth|use
 GQL_FILE = re.compile(r"(?i)resolver|apollo|graphql|yoga|mercurius|typeDefs")
 SKIP_RESOLVER_NAMES = {"if", "for", "while", "switch", "return", "catch", "function"}
 DECORATED = re.compile(r"(?m)^[ \t]*@(Query|Mutation)\s*\(")
-DECORATED_METHOD = re.compile(r"\s*(?:@\w+(?:\([^)]*\))?\s*)*(?:public\s+)?(?:async\s+)?(\w+)\s*\(")
+DECORATED_METHOD = re.compile(r"\s*(?:@\w+(?:\([^)\n]{0,200}\))?\s*){0,5}(?:public\s+)?(?:async\s+)?(\w+)\s*\(")
 GUARD_DECORATOR = re.compile(r"@UseGuards\(|@Authorized\(|@Auth\w*\(")
-CLASS_GUARD = re.compile(r"@(?:UseGuards|Authorized|Auth\w*)\([^)]*\)\s*(?:@\w+\([^)]*\)\s*)*(?:export\s+)?class\b")
+CLASS_GUARD = re.compile(r"@(?:UseGuards|Authorized|Auth\w*)\([^)\n]{0,200}\)\s*(?:@\w+\([^)\n]{0,200}\)\s*){0,5}(?:export\s+)?class\b")
 
 
 def graphql_routes(index: FileIndex) -> list[Route]:
     routes = []
-    for rel in index.iter(JS):
-        raw = index.read(rel) or ""
-        if not re.search(r"\b(?:Query|Mutation)\b", raw) or not (GQL_FILE.search(rel) or GQL_FILE.search(raw[:3000])):
+    for rel, raw in _sources(index, "Query", "Mutation"):
+        if not (GQL_FILE.search(rel) or GQL_FILE.search(raw[:3000])):
             continue
         code = strip_comments(raw)
-        for section in RESOLVER_SECTION.finditer(code):
+        for section in islice(RESOLVER_SECTION.finditer(code), 10):
             open_idx = section.end() - 1
-            close = match_bracket(code, open_idx)
+            close = _closing(code, open_idx)
             if close == -1:
                 continue
             block = code[open_idx + 1: close]
@@ -198,17 +218,17 @@ def graphql_routes(index: FileIndex) -> list[Route]:
                               line_of(code, open_idx + 1 + start), "graphql")
                 routes.append(_assess(route, body, code, authed=bool(GQL_AUTH.search(body))))
         class_guarded = bool(CLASS_GUARD.search(code))
-        for match in DECORATED.finditer(code):  # NestJS GraphQL and TypeGraphQL
-            args_end = match_bracket(code, match.end() - 1)
+        for match in islice(DECORATED.finditer(code), MAX_FUNCTIONS_PER_FILE):  # NestJS GraphQL and TypeGraphQL
+            args_end = _closing(code, match.end() - 1)
             method = DECORATED_METHOD.match(code, args_end + 1) if args_end != -1 else None
             if not method:
                 continue
-            params_end = match_bracket(code, method.end() - 1)
-            brace = code.find("{", params_end) if params_end != -1 else -1
-            close = match_bracket(code, brace) if brace != -1 else -1
+            params_end = _closing(code, method.end() - 1)
+            brace = code.find("{", params_end, params_end + 300) if params_end != -1 else -1
+            close = _closing(code, brace) if brace != -1 else -1
             body = code[brace: close] if close != -1 else ""
             # Decorators on this method: from the end of the previous one down to the method's name.
-            above = code[max(code.rfind("}", 0, match.start()), 0): method.end()]
+            above = code[max(code.rfind("}", max(0, match.start() - 2000), match.start()), match.start() - 2000, 0): method.end()]
             guarded = class_guarded or bool(GUARD_DECORATOR.search(above))
             route = Route("GET" if match.group(1) == "Query" else "POST", f"graphql/{match.group(1)}.{method.group(1)}", rel,
                           line_of(code, match.start()), "graphql")
@@ -234,21 +254,17 @@ PY_FIREBASE = re.compile(r"(?m)^[ \t]*@(?:\w+\.)?(on_call|on_request)\b[^\n]*\n(
 
 def firebase_routes(index: FileIndex) -> list[Route]:
     routes = []
-    for rel in index.iter(JS | {".py"}):
-        raw = index.read(rel) or ""
+    for rel, raw in _sources(index, "onCall", "onRequest", "on_call", "on_request", exts=JS | {".py"}):
         if rel.endswith(".py"):
-            if "on_call" not in raw and "on_request" not in raw:
-                continue
             code = raw
-            matches = [(m.group(2), m.start(), m.group(1) == "on_call", m.end()) for m in PY_FIREBASE.finditer(code)]
+            matches = [(m.group(2), m.start(), m.group(1) == "on_call", m.end()) for m in islice(PY_FIREBASE.finditer(code), MAX_FUNCTIONS_PER_FILE)]
         else:
-            if "onCall" not in raw and "onRequest" not in raw:
-                continue
             code = strip_comments(raw)
-            matches = [(m.group(1) or m.group(2), m.start(), m.group(3) == "onCall", m.end()) for m in FIREBASE_FN.finditer(code)]
+            matches = [(m.group(1) or m.group(2), m.start(), m.group(3) == "onCall", m.end())
+                       for m in islice(FIREBASE_FN.finditer(code), MAX_FUNCTIONS_PER_FILE)]
         for i, (name, start, callable_fn, body_start) in enumerate(matches):
             end = matches[i + 1][1] if i + 1 < len(matches) else len(code)
-            body = code[body_start: end]
+            body = code[body_start: min(end, body_start + MAX_BODY)]
             route = Route("POST" if callable_fn else "ANY", f"functions/{name}", rel, line_of(code, start), "firebase-fn")
             routes.append(_assess(route, body, code, authed=bool(FIREBASE_AUTH.search(body))))
             if routes[-1].db and (routes[-1].dynamic or routes[-1].mutates):
@@ -265,11 +281,11 @@ FORWARDS_TOKEN = re.compile(r"""headers\s*:\s*\{[^}]*Authorization\s*:[^}]*req(?
 def supabase_edge_routes(index: FileIndex) -> list[Route]:
     routes = []
     config = (index.read("supabase/config.toml") or "") if index.exists("supabase/config.toml") else ""
-    for rel in index.iter(JS):
+    for rel, raw in _sources(index):
         match = EDGE.search(rel)
         if not match or match.group(1).startswith("_"):
             continue
-        code = _module(index, rel)
+        code = strip_comments(raw)
         name = match.group(1)
         route = _assess(Route("ANY", f"/functions/v1/{name}", rel, 1, "supabase-edge"), code, code)
         # The platform's own JWT check accepts the public anon key, so it isn't a user check. Passing the caller's token
@@ -302,14 +318,14 @@ def _vercel_path(segment: str) -> str:
 
 def vercel_routes(index: FileIndex) -> list[Route]:
     routes = []
-    for rel in index.iter(JS):
+    for rel, raw in _sources(index):
         match = VERCEL_FILE.search(rel)
         if not match or any(part.startswith("_") for part in match.group(1).split("/")):
             continue  # Vercel doesn't deploy _helpers as functions
-        code = _module(index, rel)
+        code = strip_comments(raw)
         path = _vercel_path(match.group(1))
         dynamic = "[" in path
-        named = list(VERCEL_NAMED.finditer(code))
+        named = list(islice(VERCEL_NAMED.finditer(code), 10))
         if named:
             for i, fn in enumerate(named):
                 end = named[i + 1].start() if i + 1 < len(named) else len(code)
@@ -333,14 +349,14 @@ NETLIFY_AUTH = re.compile(r"\bcontext\.clientContext\??\.user\b|\bclientContext\
 
 def netlify_routes(index: FileIndex) -> list[Route]:
     routes = []
-    for rel in index.iter(JS):
+    for rel, raw in _sources(index):
         match = NETLIFY.search(rel)
         if not match:
             continue
         name = match.group(1).split("/")[0]
         if "/" in match.group(1) and match.group(1).split("/")[-1] not in (name, "index"):
             continue  # a helper file inside the function's own folder
-        code = _module(index, rel)
+        code = strip_comments(raw)
         handler = NETLIFY_HANDLER.search(code)
         if not handler:
             continue
@@ -355,11 +371,22 @@ def netlify_routes(index: FileIndex) -> list[Route]:
 
 PAGES_FN = re.compile(r"(?:^|/)functions/(.*?)(?:/index)?\.(?:ts|js|mjs)$")
 ON_REQUEST = re.compile(r"(?m)^export\s+(?:const|async\s+function|function)\s+onRequest(Get|Post|Put|Patch|Delete|Head|Options)?\b")
-WORKER_FETCH = re.compile(r"export\s+default\s*\{[\s\S]*?\bfetch\s*(?::\s*(?:async\s*)?(?:function\s*)?)?\(|addEventListener\(\s*['\"]fetch['\"]")
+WORKER_DEFAULT = re.compile(r"export\s+default\s*\{")
+WORKER_METHOD = re.compile(r"\bfetch\s*(?::\s*(?:async\s*)?(?:function\s*)?)?\(")
+WORKER_LISTENER = re.compile(r"addEventListener\(\s*['\"]fetch['\"]")
 WORKER_PATH = re.compile(r"(?:pathname|\.path)\s*===?\s*['\"](/[^'\"]*)['\"]")
 METHOD_CHECK = re.compile(r"method\s*===?\s*['\"](GET|POST|PUT|PATCH|DELETE)['\"]")
 CF_AUTH = re.compile(r"\bcontext\.data\.(?:user|auth|session)\b|\bCf-Access|\bjwtVerify\(|\bverifyToken\(|\bgetUser\(|\brequireAuth\(|\bauthorize\(|"
                      r"\bAuthorization\b[\s\S]{0,200}(?:verify|compare|===)")
+
+
+def _worker_start(code: str) -> int | None:
+    """Where a Worker's fetch handler starts, if this module has one."""
+    default = WORKER_DEFAULT.search(code)
+    if default and WORKER_METHOD.search(code, default.end(), default.end() + 5000):
+        return default.start()
+    listener = WORKER_LISTENER.search(code)
+    return listener.start() if listener else None
 
 
 def _pages_path(segment: str) -> str:
@@ -370,13 +397,10 @@ def _pages_path(segment: str) -> str:
 def cloudflare_routes(index: FileIndex) -> list[Route]:
     routes = []
     has_wrangler = any(index.exists(name) for name in ("wrangler.toml", "wrangler.json", "wrangler.jsonc"))
-    for rel in index.iter(JS):
-        raw = index.read(rel) or ""
-        if "onRequest" not in raw and not (has_wrangler and "fetch" in raw):
-            continue
+    for rel, raw in _sources(index, "onRequest", *(("fetch",) if has_wrangler else ())):
         code = strip_comments(raw)
         pages = PAGES_FN.search(rel)
-        handlers = list(ON_REQUEST.finditer(code)) if pages else []
+        handlers = list(islice(ON_REQUEST.finditer(code), 10)) if pages else []
         if handlers:
             path = _pages_path(pages.group(1))
             for i, handler in enumerate(handlers):
@@ -385,10 +409,10 @@ def cloudflare_routes(index: FileIndex) -> list[Route]:
                 route = Route(method, path, rel, line_of(code, handler.start()), "cloudflare", dynamic="[" in path)
                 routes.append(_assess(route, code[handler.start(): end], code, authed=bool(CF_AUTH.search(code[handler.start(): end]))))
             continue
-        if not has_wrangler or not WORKER_FETCH.search(code):
+        offset = _worker_start(code) if has_wrangler else None
+        if offset is None:
             continue
-        paths = sorted(set(WORKER_PATH.findall(code)))
-        offset = WORKER_FETCH.search(code).start()
+        paths = sorted(set(islice((m.group(1) for m in WORKER_PATH.finditer(code)), MAX_FUNCTIONS_PER_FILE)))
         if not paths:
             routes.append(_assess(Route("ANY", "/", rel, line_of(code, offset), "cloudflare"), code, code, authed=bool(CF_AUTH.search(code))))
         for path in paths:

