@@ -1,0 +1,2 @@
+name = "demo"
+main = "src/worker.ts"

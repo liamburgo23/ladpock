@@ -62,9 +62,19 @@ def is_env_template(name: str) -> bool:
     return is_env_file(lower) and lower.rsplit(".", 1)[-1] in {"example", "sample", "template", "dist", "defaults"}
 
 
+# File-based routes ship whatever their folder is called: app/api/test/route.ts is a live URL, not a test.
+_ROUTE_FILE = re.compile(r"(?:^|/)(?:app/(?:.*/)?route\.[a-z]+$|pages/api/|src/routes/(?:.*/)?\+server\.|netlify/functions/|supabase/functions/)")
+
+
 def is_test_path(rel: str) -> bool:
-    parts = rel.lower().split("/")
-    return any(p in TEST_DIRS for p in parts[:-1]) or bool(_TEST_FILE.search(parts[-1]))
+    lower = rel.lower()
+    parts = lower.split("/")
+    if _TEST_FILE.search(parts[-1]):
+        return True
+    route = _ROUTE_FILE.search(lower)
+    if route and not any(p in TEST_DIRS for p in lower[:route.start()].split("/")):
+        return False
+    return any(p in TEST_DIRS for p in parts[:-1])
 
 
 def is_ai_instruction_file(rel: str) -> bool:

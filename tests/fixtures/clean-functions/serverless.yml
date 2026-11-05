@@ -1,0 +1,11 @@
+service: demo
+provider:
+  name: aws
+functions:
+  stats:
+    handler: src/orders.stats
+    events:
+      - http:
+          path: reports/stats
+          method: get
+          authorizer: aws_iam

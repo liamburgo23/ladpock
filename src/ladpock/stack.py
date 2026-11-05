@@ -19,7 +19,8 @@ LABELS = {
     "kubernetes": "Kubernetes", "terraform": "Terraform", "electron": "Electron", "react-native": "React Native",
     "expo": "Expo", "android": "Android", "ios": "iOS", "flutter": "Flutter", "go": "Go", "php": "PHP",
     "laravel": "Laravel", "ruby": "Ruby", "rails": "Rails", "java": "Java/Kotlin", "spring": "Spring", "dotnet": ".NET",
-    "aspnet": "ASP.NET", "go-web": "Go web server",
+    "aspnet": "ASP.NET", "go-web": "Go web server", "trpc": "tRPC", "convex": "Convex", "graphql": "GraphQL",
+    "vercel": "Vercel Functions", "netlify": "Netlify Functions", "cloudflare": "Cloudflare Workers", "aws-lambda": "AWS Lambda",
 }
 
 # Stacks with dedicated, framework-aware checks. Everything else still gets the
@@ -27,7 +28,7 @@ LABELS = {
 DEEP_PACKS = {"nextjs", "react", "supabase", "firebase", "stripe", "github-actions", "tauri", "express", "fastify",
               "hono", "koa", "nestjs", "fastapi", "flask", "django", "docker", "kubernetes", "terraform", "electron",
               "react-native", "expo", "android", "ios", "flutter", "sveltekit", "remix", "nuxt", "astro", "spring", "rails",
-              "laravel", "aspnet", "go-web"}
+              "laravel", "aspnet", "go-web", "trpc", "convex", "graphql", "vercel", "netlify", "cloudflare", "aws-lambda"}
 
 _NPM = {
     "next": "nextjs", "react": "react", "vite": "vite", "express": "express", "fastify": "fastify",
@@ -40,6 +41,10 @@ _NPM = {
     "koa": "koa", "@koa/router": "koa", "@nestjs/core": "nestjs", "@nestjs/common": "nestjs", "@hono/node-server": "hono",
     "electron": "electron", "react-native": "react-native", "expo": "expo", "@remix-run/react": "remix",
     "@remix-run/serve": "remix", "@react-router/node": "remix", "@react-router/dev": "remix", "nitropack": "nuxt",
+    "@trpc/server": "trpc", "convex": "convex", "graphql": "graphql", "@apollo/server": "graphql", "apollo-server": "graphql",
+    "graphql-yoga": "graphql", "type-graphql": "graphql", "@nestjs/graphql": "graphql", "mercurius": "graphql",
+    "wrangler": "cloudflare", "@cloudflare/workers-types": "cloudflare", "@netlify/functions": "netlify", "@vercel/node": "vercel",
+    "serverless": "aws-lambda", "aws-lambda": "aws-lambda", "firebase-functions": "firebase",
 }
 _PY = {
     "fastapi": "fastapi", "flask": "flask", "django": "django", "supabase": "supabase", "stripe": "stripe",
@@ -103,6 +108,16 @@ def detect(index: FileIndex) -> list[str]:
             add("nextjs")
         elif name in ("firestore.rules", "storage.rules", "database.rules.json", "firebase.json"):
             add("firebase")
+        elif name in ("wrangler.toml", "wrangler.json", "wrangler.jsonc"):
+            add("cloudflare")
+        elif name == "netlify.toml":
+            add("netlify")
+        elif name == "vercel.json":
+            add("vercel")
+        elif name in ("serverless.yml", "serverless.yaml"):
+            add("aws-lambda")
+        elif name in ("template.yaml", "template.yml") and "AWS::Serverless" in (index.read(rel) or ""):
+            add("aws-lambda")
         elif name == "Dockerfile" or name.startswith(("Dockerfile.", "Containerfile")) or (
                 name.lower().startswith(("docker-compose", "compose.")) and name.endswith((".yml", ".yaml"))):
             add("docker")
@@ -150,6 +165,8 @@ def detect(index: FileIndex) -> list[str]:
                 add("tauri")
         if rel.startswith("supabase/") or "/supabase/migrations/" in rel:
             add("supabase")
+        if rel.startswith("convex/") and name.endswith((".ts", ".js")):
+            add("convex")
         if rel.startswith(".github/workflows/"):
             add("github-actions")
     if "nextjs" in found and "react" not in found:

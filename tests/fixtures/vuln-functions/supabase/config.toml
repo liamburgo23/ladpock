@@ -1,0 +1,2 @@
+[functions.admin-export]
+verify_jwt = false

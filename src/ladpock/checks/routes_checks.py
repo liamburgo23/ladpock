@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Iterator
 
 from ..models import Finding, Severity
@@ -9,7 +10,8 @@ from ..routes import AUTH_FLOW, MUTATING, PATH_MATCHED_MIDDLEWARE, Route
 from .base import CheckInfo, ScanContext, check
 
 STACKS = ("nextjs", "express", "fastify", "hono", "koa", "nestjs", "fastapi", "flask", "django", "sveltekit", "remix",
-          "nuxt", "astro", "spring", "go", "rails", "laravel", "dotnet")
+          "nuxt", "astro", "spring", "go", "rails", "laravel", "dotnet", "trpc", "convex", "graphql", "firebase", "supabase",
+          "vercel", "netlify", "cloudflare", "aws-lambda")
 
 
 def _finding(ctx: ScanContext, info: CheckInfo, route: Route, **kwargs) -> Finding:
@@ -44,6 +46,74 @@ def missing_ownership(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
         admin = "/admin" in route.path  # admin routes need a role check, not an ownership check
         if route.owner == "no" and route.auth in ("yes", "mw") and (route.dynamic or route.mutates) and not admin:
             yield _finding(ctx, info, route, confidence="low")
+
+
+PRIVATE_DATA = re.compile(r"(?i)user|account|customer|member|profile|order|invoice|payment|billing|subscription|message|chat|conversation|"
+                          r"note|document|upload|secret|token|credential|address|patient|medical|salary|employee|report|admin|export|"
+                          r"transaction|booking|ticket|contact|lead")
+PUBLIC_CONTENT = re.compile(r"(?i)post|blog|article|product|catalog|categor|tag|page|faq|news|event|plan|pricing|feature|price|public|sitemap|"
+                            r"health|status|version|config|settings/public|docs?\b")
+
+
+def _name_of(path: str) -> str:
+    """The last fixed part of a path, which is what the endpoint holds: posts in /api/users/[id]/posts."""
+    parts = [p for p in re.split(r"/", path) if p and not re.match(r"^(?:\[|:|\{|<|\(\?)", p)]
+    return parts[-1] if parts else ""
+
+
+@check(
+    "LP-AUTHZ-007", "Private-looking data readable without logging in", "authz", Severity.HIGH,
+    why="This endpoint reads from the database, its name suggests private data, and nothing checks who is calling. Anyone who "
+        "finds it can read that data.",
+    fix="Check for a logged-in user first and limit the results to their own records. If it really is public, return only "
+        "fields that are safe to publish. Run a scan with Live checks on to confirm whether it answers.",
+    cwe=("CWE-306", "CWE-862"),
+    stacks=STACKS,
+)
+def unauthenticated_private_read(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
+    for route in ctx.routes:
+        if route.auth != "no" or not route.db or route.mutates or route.public_path or route.webhook or route.method not in ("GET", "ANY"):
+            continue
+        name = _name_of(route.path)
+        if PRIVATE_DATA.search(name) and not PUBLIC_CONTENT.search(name):
+            yield _finding(ctx, info, route, confidence="low")
+
+
+DEBUG_PATH = re.compile(r"(?i)/(?:debug|test|seeds?|seed-?(?:db|data|users|all)|reset-?(?:db|database)|drop-?(?:db|tables?|all)|wipe|dev|mock|fixtures?|"
+                        r"phpinfo|dump|backdoor|impersonate|sudo|make-?admin|init-?db|migrate|_internal)(?:/|$|\.)")
+
+
+@check(
+    "LP-API-003", "Debug, test or seed endpoint left in the app", "abuse", Severity.HIGH,
+    why="Endpoints for seeding data, testing or debugging are written to get a job done quickly, with no login. If they reach "
+        "production, anyone can call them, and some can reset or fill your database.",
+    fix="Delete it, or only register it when running locally (check NODE_ENV or an equivalent setting). Keep seeding in a "
+        "script that isn't reachable over the web.",
+    cwe=("CWE-489", "CWE-306"),
+    stacks=STACKS,
+)
+def debug_endpoints(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
+    for route in ctx.routes:
+        if route.auth == "no" and DEBUG_PATH.search(route.path.split("?")[0]):
+            yield _finding(ctx, info, route, confidence="medium" if route.db or route.mutates else "low")
+
+
+CRON_PATH = re.compile(r"(?i)/(?:cron|crons|cron-?jobs?|scheduled|schedule/run|jobs/run|tasks/run)(?:/|$|-)")
+CRON_GUARD = re.compile(r"(?i)CRON_SECRET|x-vercel-cron|x-appengine-cron|x-cloudscheduler|\bauthorization\b|\bverifySignature\b|\bsecret\b")
+
+
+@check(
+    "LP-API-004", "Scheduled-job endpoint anyone can trigger", "abuse", Severity.MEDIUM,
+    why="A job endpoint is an ordinary URL. Without a secret, anyone can run the job as often as they like, which can send "
+        "duplicate emails, repeat billing runs or overload the app.",
+    fix="Require a secret (for example check an Authorization header against CRON_SECRET) and reject anything else.",
+    cwe=("CWE-306",),
+    stacks=STACKS,
+)
+def open_cron(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
+    for route in ctx.routes:
+        if route.auth == "no" and CRON_PATH.search(route.path) and not CRON_GUARD.search(ctx.index.read(route.file) or ""):
+            yield _finding(ctx, info, route)
 
 
 @check(

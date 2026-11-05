@@ -1,0 +1,14 @@
+Transform: AWS::Serverless-2016-10-31
+Resources:
+  RefundFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: handlers/
+      Handler: refund.lambda_handler
+      Runtime: python3.12
+      Events:
+        Refund:
+          Type: Api
+          Properties:
+            Path: /refunds
+            Method: post

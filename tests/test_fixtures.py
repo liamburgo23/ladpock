@@ -53,6 +53,12 @@ EXPECTED_APPS = {
     "LP-ELEC-008", "LP-ELEC-009", "LP-MOB-001", "LP-MOB-002", "LP-MOB-003", "LP-MOB-004", "LP-MOB-005",
 }
 EXPECTED_POLYGLOT = {"LP-AUTHZ-006", "LP-CFG-007", "LP-CFG-008", "LP-ABUSE-005"}
+EXPECTED_FUNCTIONS = {
+    "LP-AI-001", "LP-AI-002", "LP-AI-003", "LP-AI-004", "LP-AI-005", "LP-UPLOAD-001", "LP-UPLOAD-002", "LP-UPLOAD-003", "LP-LOG-001",
+    "LP-AUTHZ-007", "LP-AUTHZ-008", "LP-AUTHZ-009", "LP-AUTHZ-010", "LP-SEC-008", "LP-SEC-009", "LP-AUTH-012", "LP-AUTH-013",
+    "LP-AUTH-014", "LP-AUTH-015", "LP-CRYPTO-003", "LP-CFG-009", "LP-VIBE-006", "LP-PAY-003", "LP-INJ-013", "LP-ABUSE-012",
+    "LP-ABUSE-013", "LP-API-003", "LP-API-004", "LP-SUPA-005", "LP-SUPA-006", "LP-SUPA-007", "LP-SUPA-008", "LP-SUPA-009",
+}
 # Produced only with network access or git, covered by their own tests.
 NOT_IN_OFFLINE_FIXTURE = {"LP-SEC-004", "LP-DEP-001", "LP-SUP-005"} | {f"LP-LIVE-00{i}" for i in range(1, 10)}  # live: test_probe
 
@@ -82,7 +88,7 @@ class VulnerableFixture(unittest.TestCase):
 
     def test_catalogue_is_fully_covered(self):
         untested = (set(REGISTRY) - EXPECTED_VULN - EXPECTED_TAURI - EXPECTED_NODE - EXPECTED_PYTHON - EXPECTED_INFRA
-                    - EXPECTED_APPS - EXPECTED_POLYGLOT - NOT_IN_OFFLINE_FIXTURE)
+                    - EXPECTED_APPS - EXPECTED_POLYGLOT - EXPECTED_FUNCTIONS - NOT_IN_OFFLINE_FIXTURE)
         self.assertEqual(sorted(untested), [], "add these checks to a vulnerable fixture")
 
     def test_secrets_are_masked_in_output(self):
@@ -107,7 +113,7 @@ class VulnerableFixture(unittest.TestCase):
 class CleanFixture(unittest.TestCase):
     def test_clean_apps_have_no_findings(self):
         for name in ("clean-next-supabase", "clean-tauri", "clean-node-api", "clean-python-web", "clean-infra",
-                     "clean-electron", "clean-mobile", "clean-polyglot", "clean-fullstack"):
+                     "clean-electron", "clean-mobile", "clean-polyglot", "clean-fullstack", "clean-functions"):
             with self.subTest(name), materialize(name) as tmp:
                 findings, errors = run_all(_context(Path(tmp) / name))
                 self.assertEqual(errors, [])
@@ -249,6 +255,61 @@ class PolyglotFixture(unittest.TestCase):
         self.assertEqual(files("LP-AUTH-003"), {"php", "java"})  # md5 / MessageDigest for passwords
         self.assertIn("java", files("LP-CFG-001"))  # @CrossOrigin(origins = "*")
         self.assertIn("go", files("LP-CRYPTO-001"))  # math/rand for a reset token
+
+
+class FunctionBackends(unittest.TestCase):
+    """Backends with no web server to read: tRPC, Convex, GraphQL, Firebase, Supabase Edge, Vercel, Netlify, Cloudflare, Lambda."""
+
+    def load(self, name):
+        with materialize(name) as tmp:
+            root = Path(tmp) / name
+            findings, errors = run_all(_context(root))
+            routes = {(r.kind, r.method, r.path): r for r in analyze(FileIndex(root))}
+        self.assertEqual(errors, [])
+        return findings, routes
+
+    def test_vulnerable(self):
+        findings, routes = self.load("vuln-functions")
+        expected = {
+            ("trpc", "GET", "/api/trpc/order.getById"): ("yes", "no"), ("trpc", "POST", "/api/trpc/order.remove"): ("no", "no"),
+            ("convex", "POST", "convex/messages:remove"): ("no", "no"), ("convex", "GET", "convex/messages:read"): ("yes", "yes"),
+            ("graphql", "GET", "graphql/Query.secretReport"): ("yes", "no"), ("graphql", "POST", "graphql/Mutation.deleteUser"): ("no", "no"),
+            ("graphql", "POST", "graphql/Mutation.cancelOrder"): ("no", "no"),  # NestJS, no guard
+            ("firebase-fn", "POST", "functions/deleteAccount"): ("no", "no"), ("firebase-fn", "POST", "functions/readProfile"): ("yes", "no"),
+            ("supabase-edge", "ANY", "/functions/v1/admin-export"): ("no", "no"),
+            ("vercel", "DELETE", "/api/orders/[id]"): ("no", "no"), ("netlify", "ANY", "/.netlify/functions/delete-account"): ("no", "no"),
+            ("cloudflare", "DELETE", "/api/notes/[id]"): ("no", "no"), ("cloudflare", "POST", "/api/feedback"): ("no", "no"),
+            ("lambda", "POST", "/orders"): ("no", "no"), ("lambda", "GET", "/orders/{id}"): ("no", "no"), ("lambda", "POST", "/refunds"): ("no", "no"),
+        }
+        for key, (auth, owner) in expected.items():
+            with self.subTest(key):
+                self.assertEqual((routes[key].auth, routes[key].owner), (auth, owner))
+        self.assertTrue(routes[("trpc", "POST", "/api/trpc/order.summarise")].paid_api)
+        self.assertEqual(routes[("lambda", "GET", "/admin/stats")].auth, "mw")  # API Gateway authorizer
+        self.assertIn("verify_jwt", routes[("supabase-edge", "ANY", "/functions/v1/admin-export")].notes[0])
+        self.assertNotIn(("convex", "POST", "convex/messages:purge"), routes)  # internal functions can't be called from outside
+        self.assertFalse(any(path == "/api/_lib/helper" for _, _, path in routes))  # Vercel doesn't deploy _ files
+        self.assertEqual(sorted(EXPECTED_FUNCTIONS - {f.check_id for f in findings}), [])
+        where = {(f.check_id, f.snippet) for f in findings}
+        self.assertIn(("LP-AUTHZ-001", "POST convex/messages:remove"), where)
+        self.assertIn(("LP-ABUSE-010", "POST /api/trpc/order.summarise"), where)
+        self.assertIn(("LP-AUTHZ-007", "GET /api/customers"), where)
+        self.assertIn(("LP-AUTHZ-007", "GET /api/trpc/order.allInvoices"), where)
+        self.assertIn(("LP-API-003", "POST /api/seed"), where)
+        logged = {f.snippet for f in findings if f.check_id == "LP-LOG-001"}
+        self.assertFalse(any("Invalid password" in s or "password rejected" in s for s in logged))  # just words in a string
+        self.assertEqual(len(logged), 4)
+
+    def test_clean(self):
+        _, routes = self.load("clean-functions")
+        for key in (("trpc", "POST", "/api/trpc/order.remove"), ("convex", "POST", "convex/messages:remove"),
+                    ("graphql", "POST", "graphql/Mutation.cancelOrder"), ("firebase-fn", "POST", "functions/deleteAccount"),
+                    ("vercel", "ANY", "/api/orders/[id]"), ("netlify", "ANY", "/.netlify/functions/delete-account"),
+                    ("cloudflare", "DELETE", "/api/notes/[id]")):
+            with self.subTest(key):
+                self.assertEqual((routes[key].auth, routes[key].owner), ("yes", "yes"))
+        edge = routes[("supabase-edge", "ANY", "/functions/v1/my-notes")]
+        self.assertEqual((edge.auth, edge.owner), ("yes", "rls"))  # the caller's token, so Row Level Security applies
 
 
 class MoreFrameworkRoutes(unittest.TestCase):

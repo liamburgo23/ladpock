@@ -2,7 +2,9 @@
 ownership check, validation, rate limiting). Next.js handlers and server
 actions are read here; Express, Fastify, Hono, NestJS, FastAPI, Flask and
 Django come from server_routes; SvelteKit, Remix, Nuxt and Astro from
-fullstack_routes; Spring, Go, Rails, Laravel and ASP.NET from backend_routes.
+fullstack_routes; Spring, Go, Rails, Laravel and ASP.NET from backend_routes;
+tRPC, Convex, GraphQL, Firebase, Supabase Edge, Vercel, Netlify, Cloudflare and
+AWS Lambda functions from function_routes.
 
 This is heuristic. It recognises common libraries and patterns, and says "?"
 when it can't tell rather than guessing.
@@ -276,11 +278,13 @@ def analyze(index: FileIndex) -> list[Route]:
                 routes.append(route)
     from .backend_routes import analyze_backends
     from .fullstack_routes import analyze_fullstack
+    from .function_routes import analyze_functions
     from .server_routes import analyze_servers
 
     routes.extend(analyze_servers(index, Route))
     routes.extend(analyze_fullstack(index))
     routes.extend(analyze_backends(index))
+    routes.extend(analyze_functions(index))
     routes.sort(key=lambda r: (r.kind == "action", r.path, METHODS.index(r.method) if r.method in METHODS else 99))
     return routes
 

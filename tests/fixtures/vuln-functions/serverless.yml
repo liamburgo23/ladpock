@@ -1,0 +1,21 @@
+service: demo
+provider:
+  name: aws
+functions:
+  createOrder:
+    handler: src/orders.create
+    events:
+      - http:
+          path: orders
+          method: post
+  getOrder:
+    handler: src/orders.get
+    events:
+      - httpApi: GET /orders/{id}
+  adminStats:
+    handler: src/orders.stats
+    events:
+      - http:
+          path: admin/stats
+          method: get
+          authorizer: aws_iam
