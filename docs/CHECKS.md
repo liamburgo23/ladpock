@@ -7,9 +7,11 @@ Generated with `ladpock checks --markdown`.
 
 | ID | Check | Default severity | Applies to |
 |---|---|---|---|
+| `LP-AI-001` | AI API key used from the browser | high | all projects |
 | `LP-DOCKER-002` | Secret baked into the container image | high | all projects |
 | `LP-INFRA-004` | Kubernetes Secret committed with its values | high | all projects |
 | `LP-LIVE-004` | Private file served to anyone | critical | all projects |
+| `LP-LOG-001` | Password or token written to the logs | medium | all projects |
 | `LP-SEC-001` | Supabase admin key exposed to the browser | critical | all projects |
 | `LP-SEC-002` | Secret exposed through a public environment variable | high | all projects |
 | `LP-SEC-003` | Hardcoded credential in the code | critical | all projects |
@@ -17,6 +19,8 @@ Generated with `ladpock checks --markdown`.
 | `LP-SEC-005` | .env file not covered by .gitignore | medium | all projects |
 | `LP-SEC-006` | Credential written into an AI tool config | high | all projects |
 | `LP-SEC-007` | Session or app signing key written in the code | high | all projects |
+| `LP-SEC-008` | All environment variables sent out | critical | all projects |
+| `LP-SEC-009` | Build copies every secret into the front end | critical | all projects |
 | `LP-TF-005` | Password or key written in infrastructure code | high | all projects |
 
 ## Auth and sign-in
@@ -32,10 +36,15 @@ Generated with `ladpock checks --markdown`.
 | `LP-AUTH-007` | Login tokens that never expire | low | all projects |
 | `LP-AUTH-008` | Password hashing cost set too low | low | all projects |
 | `LP-AUTH-009` | Login errors reveal whether an account exists | low | all projects |
-| `LP-AUTH-010` | Sign-in or password endpoint has no rate limit | medium | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet |
+| `LP-AUTH-010` | Sign-in or password endpoint has no rate limit | medium | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet, trpc, convex, graphql, firebase, supabase, vercel, netlify, cloudflare, aws-lambda |
 | `LP-AUTH-011` | Token decoded but never verified | high | all projects |
+| `LP-AUTH-012` | Accounts linked by email without proof | medium | all projects |
+| `LP-AUTH-013` | Hand-built sign-in link has no state value | medium | all projects |
+| `LP-AUTH-014` | Password reset link built from the Host header | medium | all projects |
+| `LP-AUTH-015` | Login token set from JavaScript | medium | all projects |
 | `LP-INFRA-003` | Database with a default or empty password | medium | all projects |
 | `LP-LIVE-005` | Sign-in allows unlimited attempts | medium | all projects |
+| `LP-LIVE-010` | Session cookie missing protections | medium | all projects |
 | `LP-MOB-004` | Login token stored in plain app storage | medium | all projects |
 | `LP-SUPA-004` | Supabase getSession() trusted on the server | medium | supabase |
 
@@ -43,12 +52,16 @@ Generated with `ladpock checks --markdown`.
 
 | ID | Check | Default severity | Applies to |
 |---|---|---|---|
-| `LP-AUTHZ-001` | Endpoint changes data without checking who is calling | high | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet |
-| `LP-AUTHZ-002` | Record fetched by ID without checking it belongs to the user | high | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet |
-| `LP-AUTHZ-003` | Authentication only enforced in middleware | medium | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet |
+| `LP-AUTHZ-001` | Endpoint changes data without checking who is calling | high | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet, trpc, convex, graphql, firebase, supabase, vercel, netlify, cloudflare, aws-lambda |
+| `LP-AUTHZ-002` | Record fetched by ID without checking it belongs to the user | high | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet, trpc, convex, graphql, firebase, supabase, vercel, netlify, cloudflare, aws-lambda |
+| `LP-AUTHZ-003` | Authentication only enforced in middleware | medium | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet, trpc, convex, graphql, firebase, supabase, vercel, netlify, cloudflare, aws-lambda |
 | `LP-AUTHZ-004` | Request data saved straight into a database record (mass assignment) | medium | all projects |
 | `LP-AUTHZ-005` | Security check written as an assert | low | all projects |
 | `LP-AUTHZ-006` | Login requirement switched off for every route | high | all projects |
+| `LP-AUTHZ-007` | Private-looking data readable without logging in | high | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet, trpc, convex, graphql, firebase, supabase, vercel, netlify, cloudflare, aws-lambda |
+| `LP-AUTHZ-008` | Users can choose their own role | high | all projects |
+| `LP-AUTHZ-009` | Admin or paid status trusted from the browser | high | all projects |
+| `LP-AUTHZ-010` | User ID taken from the request instead of the session | high | all projects |
 | `LP-ELEC-004` | Whole IPC channel exposed to the web page | high | electron |
 | `LP-LIVE-001` | Endpoint answered without logging in | high | all projects |
 | `LP-LIVE-008` | One user can read another user's data | critical | all projects |
@@ -57,6 +70,11 @@ Generated with `ladpock checks --markdown`.
 | `LP-SUPA-001` | Supabase table without Row Level Security | high | supabase |
 | `LP-SUPA-002` | Supabase policy lets everyone through | high | supabase |
 | `LP-SUPA-003` | Firebase rules open to everyone | critical | all projects |
+| `LP-SUPA-005` | Supabase policy lets any signed-in user through | high | supabase |
+| `LP-SUPA-006` | Database function runs with admin rights and no fixed search path | medium | supabase |
+| `LP-SUPA-007` | Database view skips Row Level Security | medium | supabase |
+| `LP-SUPA-008` | Supabase storage open to everyone | high | supabase |
+| `LP-SUPA-009` | Firebase rules let any signed-in user through | high | all projects |
 | `LP-TAURI-003` | Websites on the internet can call your app's commands | high | tauri |
 | `LP-TAURI-004` | Web page can read or write files anywhere | high | tauri |
 | `LP-TAURI-005` | Web page can run programs on the computer | high | tauri |
@@ -73,15 +91,24 @@ Generated with `ladpock checks --markdown`.
 | `LP-ABUSE-003` | Regular expression built from user input | medium | all projects |
 | `LP-ABUSE-004` | Request size limit raised very high | low | all projects |
 | `LP-ABUSE-005` | Go HTTP server without timeouts | low | all projects |
-| `LP-ABUSE-010` | Paid AI or messaging API reachable without logging in | high | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet |
-| `LP-ABUSE-011` | Paid API endpoint has no rate limit | medium | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet |
+| `LP-ABUSE-010` | Paid AI or messaging API reachable without logging in | high | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet, trpc, convex, graphql, firebase, supabase, vercel, netlify, cloudflare, aws-lambda |
+| `LP-ABUSE-011` | Paid API endpoint has no rate limit | medium | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet, trpc, convex, graphql, firebase, supabase, vercel, netlify, cloudflare, aws-lambda |
+| `LP-ABUSE-012` | Anyone can send email or texts to any address | medium | all projects |
+| `LP-ABUSE-013` | Endpoint returns a whole table | low | all projects |
+| `LP-AI-003` | The caller chooses the AI model or token limit | medium | all projects |
 | `LP-API-002` | GraphQL has no query depth or cost limit | low | all projects |
+| `LP-API-003` | Debug, test or seed endpoint left in the app | high | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet, trpc, convex, graphql, firebase, supabase, vercel, netlify, cloudflare, aws-lambda |
+| `LP-API-004` | Scheduled-job endpoint anyone can trigger | medium | nextjs, express, fastify, hono, koa, nestjs, fastapi, flask, django, sveltekit, remix, nuxt, astro, spring, go, rails, laravel, dotnet, trpc, convex, graphql, firebase, supabase, vercel, netlify, cloudflare, aws-lambda |
 | `LP-INFRA-005` | Container has no CPU or memory limit | low | all projects |
+| `LP-UPLOAD-002` | File upload accepts any size or type | medium | all projects |
 
 ## Injection
 
 | ID | Check | Default severity | Applies to |
 |---|---|---|---|
+| `LP-AI-002` | AI reply run as code or as a database query | high | all projects |
+| `LP-AI-004` | User input written into the AI's system prompt | medium | all projects |
+| `LP-AI-005` | AI agent can run code or shell commands | high | all projects |
 | `LP-ELEC-005` | Link opened in the system without checking the address | medium | electron |
 | `LP-ELEC-009` | IPC handler uses page input for files or programs | medium | electron |
 | `LP-INJ-001` | HTML injected without sanitising | medium | all projects |
@@ -96,7 +123,13 @@ Generated with `ladpock checks --markdown`.
 | `LP-INJ-010` | Database query built straight from the request (NoSQL injection) | high | all projects |
 | `LP-INJ-011` | Object properties set from request data (prototype pollution) | medium | all projects |
 | `LP-INJ-012` | Template built from user input (server-side template injection) | high | all projects |
+| `LP-INJ-013` | Archive unpacked without checking paths inside it | medium | all projects |
+| `LP-LIVE-011` | Page puts request input back as raw HTML | high | all projects |
+| `LP-LIVE-012` | A stray quote breaks a database query | critical | all projects |
+| `LP-LIVE-013` | App redirects to any website | medium | all projects |
 | `LP-TAURI-010` | Command runs a program using input from the page | medium | tauri |
+| `LP-UPLOAD-001` | Uploaded file saved under the name the user chose | high | all projects |
+| `LP-UPLOAD-003` | Uploads saved into a public web folder | medium | all projects |
 
 ## Payments
 
@@ -104,6 +137,7 @@ Generated with `ladpock checks --markdown`.
 |---|---|---|---|
 | `LP-PAY-001` | Webhook accepts requests without checking the signature | high | all projects |
 | `LP-PAY-002` | Price or amount taken from the client | high | all projects |
+| `LP-PAY-003` | Paid status taken from the checkout redirect | high | all projects |
 
 ## Crypto and randomness
 
@@ -111,6 +145,7 @@ Generated with `ladpock checks --markdown`.
 |---|---|---|---|
 | `LP-CRYPTO-001` | Predictable random numbers used for a secret value | medium | all projects |
 | `LP-CRYPTO-002` | Weak or broken encryption | medium | all projects |
+| `LP-CRYPTO-003` | Secret compared in a way that leaks it | low | all projects |
 
 ## Config and deployment
 
@@ -125,6 +160,7 @@ Generated with `ladpock checks --markdown`.
 | `LP-CFG-006` | Client IP taken from headers anyone can set | low | all projects |
 | `LP-CFG-007` | Spring Boot actuator endpoints exposed | high | all projects |
 | `LP-CFG-008` | Detailed errors shown to visitors in production | medium | all projects |
+| `LP-CFG-009` | Image optimiser accepts any website | medium | all projects |
 | `LP-DOCKER-001` | Container runs as root | medium | all projects |
 | `LP-ELEC-001` | Web page inside the app can use Node.js | high | electron |
 | `LP-ELEC-002` | Context isolation or the sandbox turned off | high | electron |
@@ -138,6 +174,9 @@ Generated with `ladpock checks --markdown`.
 | `LP-LIVE-003` | App lets any website read its responses (CORS) | medium | all projects |
 | `LP-LIVE-006` | Error page shows a stack trace | medium | all projects |
 | `LP-LIVE-007` | Server announces its software version | low | all projects |
+| `LP-LIVE-014` | Private answer marked as cacheable | medium | all projects |
+| `LP-LIVE-015` | Folder contents listed to anyone | medium | all projects |
+| `LP-LIVE-016` | API documentation open to anyone | low | all projects |
 | `LP-MOB-001` | App allows unencrypted HTTP traffic | medium | all projects |
 | `LP-MOB-002` | Android app is debuggable or allows data backups | high | all projects |
 | `LP-MOB-005` | WebView with risky settings | medium | all projects |
@@ -174,3 +213,4 @@ Generated with `ladpock checks --markdown`.
 | `LP-VIBE-003` | Default or demo password in code | high | all projects |
 | `LP-VIBE-004` | Debug mode switched on | medium | all projects |
 | `LP-VIBE-005` | Stack trace sent back to the user | medium | all projects |
+| `LP-VIBE-006` | Type or lint errors ignored in the build | low | all projects |

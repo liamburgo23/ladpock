@@ -64,7 +64,8 @@ TOOLS = [
     {
         "name": "ladpock_routes",
         "description": "List every API endpoint LadPock found (Next.js, SvelteKit, Remix, Nuxt, Astro, Express, Fastify, Hono, "
-                       "Koa, NestJS, FastAPI, Flask, Django, Spring, Go, Rails, Laravel, ASP.NET) with whether it checks login, "
+                       "Koa, NestJS, FastAPI, Flask, Django, Spring, Go, Rails, Laravel, ASP.NET, tRPC, Convex, GraphQL, Firebase, Supabase Edge, "
+                       "Vercel, Netlify, Cloudflare, AWS Lambda) with whether it checks login, "
                        "record ownership, input validation and rate limits.",
         "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
     },
@@ -149,7 +150,8 @@ def call_tool(db: DB, name: str, args: dict) -> str:
         routes = analyze(FileIndex(root))
         if not routes:
             return ("No HTTP routes found (supported: Next.js, SvelteKit, Remix, Nuxt, Astro, Express, Fastify, Hono, Koa, NestJS, "
-                    "FastAPI, Flask, Django, Spring, Go, Rails, Laravel, ASP.NET).")
+                    "FastAPI, Flask, Django, Spring, Go, Rails, Laravel, ASP.NET, tRPC, Convex, GraphQL, Firebase, Supabase Edge, Vercel, Netlify, "
+                    "Cloudflare, AWS Lambda).")
         return "\n".join(f"{r.method} {r.path} ({r.file}:{r.line}) auth={r.auth} owner={r.owner} validation={r.validation} "
                          f"rate_limit={r.rate_limit}" + (f" GAPS: {', '.join(gaps(r))}" if gaps(r) else "") for r in routes)
     if name == "ladpock_explain_grade":

@@ -70,6 +70,7 @@ class ScanResult:
     started: str = ""
     checks_run: int = 0
     changes: dict | None = None
+    live: dict | None = None
 
     def to_dict(self) -> dict:
         deep, generic = coverage(self.stack)
@@ -93,6 +94,7 @@ class ScanResult:
             "scanners": [{"name": s.name, "available": s.available, "version": s.version, "ran": s.ran,
                           "error": s.error} for s in self.scanners],
             "needs_a_human": [{"id": i, "text": t} for i, t in self.human],
+            "live": self.live,
             "errors": self.errors,
         }
 
@@ -299,7 +301,7 @@ def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bo
     return ScanResult(
         root=root, project_id=project_id, stack=stack, profile=profile, findings=findings, suppressed=suppressed,
         routes=routes, advisory_hits=hits, scorecard=card, scanners=scanners, feeds=feeds, components=len(components),
-        errors=errors, human=items_for(set(stack)), started=started, checks_run=checks_run, changes=changes,
+        errors=errors, human=items_for(set(stack)), started=started, checks_run=checks_run, changes=changes, live=live,
     )
 
 

@@ -3,6 +3,34 @@
 All notable changes to LadPock. Versions follow [semantic versioning](https://semver.org/); while LadPock is below
 1.0, minor versions can include changes to checks and grades.
 
+## [0.12.0] - 2026-11-05
+
+### Added
+- Route matrix for backends with no server of your own: tRPC, Convex, GraphQL resolvers (JavaScript, NestJS, TypeGraphQL),
+  Firebase Cloud Functions, Supabase Edge Functions, and Vercel, Netlify, Cloudflare (Pages Functions and Workers) and AWS
+  Lambda (Serverless Framework and SAM) functions.
+- Checks for AI features: API keys in the browser, AI replies run as code or queries, callers choosing the model or token
+  limit, user input in system prompts, agents with shell or code tools.
+- Checks for file uploads, passwords and tokens in logs, roles and user IDs taken from the request, admin or paid status
+  trusted from the browser, all environment variables sent out or copied into the front end, email account linking,
+  hand-built sign-in links with no state, reset links built from the Host header, login tokens set from JavaScript,
+  timing-unsafe secret comparison, open image optimisers, paid status from the checkout redirect, archive path traversal,
+  sending email or texts to any address, endpoints returning whole tables, leftover debug and seed endpoints, open
+  scheduled-job endpoints, and private-looking data readable without a login.
+- Supabase and Firebase checks: policies that only check someone is signed in, SECURITY DEFINER functions without a fixed
+  search path, views that skip Row Level Security or expose `auth.users`, and open storage.
+- More live probes: session cookie flags, input coming back as raw HTML, a stray quote breaking a database query, open
+  redirects, private answers marked cacheable, folder listings, public API docs, and more sensitive paths.
+- `ladpock scan --format html` and a **Download report** button: a one-page report to keep or pass on, with no scripts.
+- A GitHub Action (`uses: liamburgo23/ladpock@v0.12.0`) and `ladpock scan --github`: marks on the changed lines, a job summary
+  and the grade as step outputs.
+
+### Changed
+- `--format json` now includes the live check results.
+
+### Fixed
+- File-based routes in a folder called `test`, `fixtures` or similar were skipped as test code, although they ship.
+
 ## [0.11.0] - 2026-11-05
 
 ### Added
@@ -121,6 +149,7 @@ All notable changes to LadPock. Versions follow [semantic versioning](https://se
   EPSS with "new since you last looked"; hallucinated-package detection; grades; fix prompts; JSON and SARIF
   output; and support for Gitleaks, OSV-Scanner and Opengrep.
 
+[0.12.0]: https://github.com/liamburgo23/ladpock/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/liamburgo23/ladpock/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/liamburgo23/ladpock/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/liamburgo23/ladpock/compare/v0.8.0...v0.9.0

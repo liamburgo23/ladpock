@@ -273,6 +273,39 @@ Only B's reads of A's records are tried, so an account with a higher role in pos
 The check doesn't try writes: a real ID is a real record, and the rule in SECURITY.md is that placeholder IDs are the
 only ones ever written to.
 
+## Function backends, modern mistakes and sharing results (0.12.0)
+
+**Function backends (`function_routes.py`).** Generated apps often have no server to read: the whole backend is tRPC, Convex,
+GraphQL resolvers or serverless functions. Each becomes a `Route`, so the existing checks apply.
+- **What counts as a login check** differs per platform: a tRPC procedure's name (`protectedProcedure`) or `ctx.session`,
+  Convex's `ctx.auth`, `context.auth` in Firebase, an API Gateway authorizer (recorded as `mw`, since it runs outside the code).
+- **Supabase Edge Functions:** the platform's JWT check accepts the public anon key, so it isn't a user check. Passing the
+  caller's token to the client is, so those functions are `rls`. Using the service role key means owner `no`.
+- **Not callable from outside:** Convex `internal*` functions and Vercel `_helpers` aren't routes.
+- **Paths without a leading slash** (`convex/orders:list`, `graphql/Query.user`) are skipped by the live checks.
+
+**Test paths.** `app/api/test/route.ts` was invisible, because any folder called `test` counted as test code. File-based
+routes under such a folder now count, unless a test folder sits above the route tree (`tests/fixtures/...`).
+
+**More checks (`checks/modern.py`).** Patterns that a senior reviewer would catch, and that apply across languages.
+`tests/test_modern_checks.py` pins each to lines it must find and similar lines it must leave alone. LP-AI-003 first
+flagged LadPock's own settings endpoint: `model = body.get("model")` stores a choice and checks it's installed, so the Python
+pattern now only matches keyword arguments.
+
+**More live probes.** All GET. Reflected input needs a raw `<b>` in an HTML answer. SQL needs a syntax error (SQLSTATE class 42
+and similar) for a quote but not for an ordinary value, because a type error from a parameterised query isn't injection.
+Redirects are read but never followed. With two accounts these use A's login, because most data is behind one. Cookie
+values are never kept, only names and attributes. Supabase's `sb-*` cookie is exempt from the HttpOnly check because its browser
+client reads it by design.
+
+**Report (`report_html.py`).** One self-contained file with no scripts. Everything is escaped, and its own
+Content-Security-Policy (`default-src 'none'`) means nothing could run even if escaping failed. The folder path is left out
+because reports travel.
+
+**GitHub Action (`action.yml`).** A composite action that installs from its own checkout, so tagging a release is enough. Inputs
+reach the script through the environment, never by interpolation, which is the injection LP-SUP-006 looks for. CI runs it
+against this repository. Annotations carry only check titles, fixes and paths, escaped for workflow commands, never snippets.
+
 ## Next milestones
 
 1. **Paid online scanners.** Optional integrations with commercial scanners using your own account, behind the same

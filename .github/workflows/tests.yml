@@ -34,6 +34,28 @@ jobs:
           PYTHONPATH: src
         run: python -m ladpock scan . --offline --no-external --fail-on high
 
+  action:
+    # Run the action in this repository the way someone else's workflow would.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+      - uses: ./
+        id: scan
+        with:
+          fail-on: high
+      - name: Check the outputs
+        env:
+          GRADE: ${{ steps.scan.outputs.grade }}
+          FINDINGS: ${{ steps.scan.outputs.findings }}
+          SARIF: ${{ steps.scan.outputs.sarif-file }}
+        run: |
+          echo "grade=$GRADE findings=$FINDINGS"
+          test "$GRADE" = "A+"
+          test "$FINDINGS" = "0"
+          python -c "import json, os; assert json.load(open(os.environ['SARIF']))['version'] == '2.1.0'"
+
   package:
     # Build the wheel and check the installed command works, so a missing file or
     # entry point is caught here rather than after a release.

@@ -27,14 +27,20 @@ CRITICAL (6)
 
 ## What it does
 
-- **122 built-in checks** across secrets, sign-in, authorization, API abuse and cost, injection, payments,
+- **162 built-in checks** across secrets, sign-in, authorization, API abuse and cost, injection, payments,
   crypto, config, supply chain, and AI-generated code smells. Run `ladpock checks` for the list, or see
   [docs/CHECKS.md](docs/CHECKS.md).
 - **A route matrix** for Next.js (App Router, Pages API and server actions), SvelteKit, Remix, Nuxt, Astro, Express,
   Fastify, Hono, Koa, NestJS, FastAPI, Flask, Django, Spring, Go (net/http, chi, gin, echo, fiber, gorilla/mux), Rails,
-  Laravel and ASP.NET. It shows every endpoint with its auth, ownership check, validation and rate limiting,
+  Laravel and ASP.NET, plus backends with no server of your own: tRPC, Convex, GraphQL resolvers, Firebase Cloud Functions,
+  Supabase Edge Functions, and Vercel, Netlify, Cloudflare and AWS Lambda functions. It shows every endpoint with its auth, ownership check, validation and rate limiting,
   and flags the gaps: unauthenticated writes, records fetched by ID without an ownership check, auth only in
   middleware, paid AI endpoints without a login or rate limit.
+- **Checks for how apps get built now:** AI keys in the browser, AI replies run as code or queries, user text in system
+  prompts, callers choosing the model or token limit, agents with shell tools; uploads saved under the user's file name;
+  passwords and tokens in logs; roles, IDs and paid status taken from the request or the browser; every environment
+  variable copied into the front end; leftover debug and seed endpoints; and Supabase and Firebase rules that only check
+  someone is signed in.
 - **Infrastructure checks** for Dockerfiles, Docker Compose, Kubernetes manifests, Terraform and GitHub Actions:
   root containers, baked-in secrets, privileged or host-mounted containers, databases published to the internet,
   public buckets, open firewalls, wildcard IAM policies and workflow script injection.
@@ -51,9 +57,10 @@ CRITICAL (6)
   and which start programs. Tauri v2 and v1 configs are both supported.
 - **Live checks against your running app.** Point LadPock at your app on this computer (`--live
   http://localhost:3000`, or the toggle in the dashboard) and it confirms which endpoints really answer without a
-  login, and checks security headers, CORS, exposed `.env`/`.git` files, error pages and sign-in rate limits. Give
-  it two test accounts and it tries to open one account's records as the other, the most common serious web bug. It
-  only ever talks to localhost, and only sends requests that change data if you ask.
+  login, and checks security headers, cookies, CORS, exposed `.env`/`.git` files, error pages and sign-in rate limits.
+  It tries a few harmless probes for reflected input, SQL errors and open redirects. Give it two test accounts and it
+  tries to open one account's records as the other, the most common serious web bug. It only ever talks to localhost,
+  and only sends requests that change data if you ask.
 - **Live vulnerability data before every run.** Your dependencies are checked against [OSV.dev](https://osv.dev),
   prioritised with CISA's [Known Exploited Vulnerabilities](https://www.cisa.gov/known-exploited-vulnerabilities-catalog)
   list and [EPSS](https://www.first.org/epss/) exploit likelihood. Lockfiles and manifests are read for npm, PyPI,
@@ -240,7 +247,7 @@ you've scanned before.
 |---|---|
 | `ladpock ui` | Open the dashboard (`--port`, `--no-browser`) |
 | `ladpock full-check [path]` | Everything: a Full scan, then the local AI review (`--all-projects`, `--no-ai`) |
-| `ladpock scan [path]` | Scan a project (`--profile quick\|standard\|full`, `--format text\|json\|sarif`, `-o file`, `--live URL`) |
+| `ladpock scan [path]` | Scan a project (`--profile quick\|standard\|full`, `--format text\|json\|sarif\|html`, `-o file`, `--live URL`) |
 | `ladpock` / `ladpock status` | Refresh feeds, show new advisories and your projects' grades |
 | `ladpock routes [path]` | Show the route matrix |
 | `ladpock fix-prompt [path]` | Print a prompt for your AI assistant from the last scan |
@@ -288,9 +295,13 @@ ladpock scan . --live http://localhost:3000
 ```
 
 LadPock calls every route the route matrix found without logging in, and reports any that answer with data against
-the line of code that defines them. It also checks security headers, CORS, server version banners, files that should
-never be served (`.env`, `.git`, Spring actuator, phpinfo, SQL dumps), stack traces in error pages, and whether 20
-failed sign-ins in a row get slowed down. For the most realistic results, run a production build locally.
+the line of code that defines them. It also checks security headers, session cookies, CORS, server version banners,
+files that should never be served (`.env`, `.git`, cloud credentials, private keys, Spring actuator, phpinfo, SQL dumps),
+folder listings, public API docs, stack traces in error pages, and whether 20 failed sign-ins in a row get slowed down.
+
+It also sends a few harmless probes, all GET requests: a marker in the query string to see if it comes back as raw HTML,
+a stray quote to see if it causes a database syntax error, and a made-up address in redirect parameters (redirects are
+never followed). For the most realistic results, run a production build locally.
 
 It refuses any address that isn't this computer. Routes that change data (POST, PUT, PATCH, DELETE) are skipped
 unless you add `--live-writes`, and even then they get placeholder IDs and empty bodies. Only do that against a
@@ -308,8 +319,8 @@ ladpock scan . --live http://localhost:3000
 Environment variables keep them out of your shell history; `--live-user-a` and `--live-user-b` work too, and the scan
 panel has fields for them. LadPock reads account A's lists to find its records (or take them from
 `--live-own-url /api/orders/123`), then opens them as account B. It reports the route's line of code when B gets A's
-record, and treats records both accounts can list as shared. It also reports admin endpoints that answer both accounts.
-This check only reads, even with `--live-writes`. The login values are held in memory, only sent to your app on this
+record, and treats records both accounts can list as shared. It also reports admin endpoints that answer both accounts
+and answers that need a login but are marked cacheable. This check only reads, even with `--live-writes`. The login values are held in memory, only sent to your app on this
 computer, and never logged or saved.
 
 ### With Claude Code
@@ -333,9 +344,30 @@ won't replace an existing hook unless you pass `--force`; `ladpock hook remove` 
 ### In CI
 
 ```yaml
-- run: pipx install git+https://github.com/liamburgo23/ladpock
-- run: ladpock scan . --format sarif -o ladpock.sarif --fail-on high
+- uses: liamburgo23/ladpock@v0.12.0
+  with:
+    fail-on: high   # critical, high, medium or low; leave empty to never fail
 ```
+
+The action marks findings on the changed lines, writes a job summary, and sets `grade`, `score` and `findings` as step
+outputs. It also writes `ladpock.sarif`, which you can send to GitHub code scanning with
+`github/codeql-action/upload-sarif` (use `if: always()`, so it still runs when the scan fails the job). Pin it to a
+commit SHA rather than a tag if you want to be sure what runs. Elsewhere:
+
+```bash
+pipx install git+https://github.com/liamburgo23/ladpock
+ladpock scan . --format sarif -o ladpock.sarif --fail-on high
+```
+
+### A report to keep or pass on
+
+```bash
+ladpock scan . --format html -o ladpock-report.html
+```
+
+This is one page with the grade, what to fix first, endpoints with gaps and what was checked. The **Download report**
+button in the dashboard makes the same page. It holds no scripts and loads nothing from anywhere else, secrets are
+masked, and your folder path isn't included. It does contain code snippets, so share it only with people who could see the code.
 
 ## Coverage today
 
@@ -350,6 +382,9 @@ won't replace an existing hook unless you pass `--force`; `ladpock hook remove` 
 | Android, iOS, React Native/Expo, Flutter | Manifest and ATS settings, storage, WebViews, certificate checks |
 | Docker, Compose, Kubernetes, Terraform, GitHub Actions | Infrastructure-as-code checks |
 | Spring, Go, Rails, Laravel, ASP.NET | Route matrix (annotations, filters, middleware, authorization attributes) and language checks |
+| tRPC, Convex, GraphQL (JavaScript resolvers, NestJS, TypeGraphQL) | Route matrix per procedure, function or resolver |
+| Firebase Functions, Supabase Edge, Vercel, Netlify, Cloudflare, AWS Lambda (Serverless Framework, SAM) | Route matrix per function, plus Supabase and Firebase rules |
+| OpenAI, Anthropic, Vercel AI SDK, LangChain | AI key exposure, prompt injection, running AI output, cost abuse |
 | PHP, Ruby, Java, C#, Rust | Language-specific injection, crypto, config and framework-setting checks |
 | Anything else | Generic checks: secrets, dependencies, injection patterns, config, AI code smells |
 

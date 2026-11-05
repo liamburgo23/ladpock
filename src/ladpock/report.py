@@ -311,6 +311,56 @@ def to_sarif(result) -> dict:
     }
 
 
+def to_html(result) -> str:
+    from .report_html import render
+
+    data = result.to_dict()
+    routes = [{**r.to_dict(), "gaps": gaps(r)} for r in result.routes]
+    return render(result.root.name, grade=data["grade"], score=data["score"], profile=data["profile"], started=data["started"],
+                  categories=data["categories"], findings=data["findings"], coverage=data["coverage"], checks_run=result.checks_run,
+                  dependencies=data["dependencies_checked"], scanners=data["scanners"], feeds=data["feeds"], live=data["live"],
+                  routes=routes, suppressed=len(result.suppressed))
+
+
+def _workflow_value(text: str) -> str:
+    return str(text).replace("%", "%25").replace("\r", "%0D").replace("\n", "%0A")
+
+
+def _workflow_property(text: str) -> str:
+    return _workflow_value(text).replace(":", "%3A").replace(",", "%2C")
+
+
+GITHUB_COMMAND = {Severity.CRITICAL: "error", Severity.HIGH: "error", Severity.MEDIUM: "warning", Severity.LOW: "notice", Severity.INFO: "notice"}
+MAX_ANNOTATIONS = 30
+
+
+def github_annotations(result) -> list[str]:
+    """Workflow commands that mark findings on the changed lines. GitHub parses these from the job's output."""
+    ranked = sorted(result.findings, key=lambda f: -int(f.severity))[:MAX_ANNOTATIONS]
+    lines = []
+    for f in ranked:
+        where = f"file={_workflow_property(f.file)}" + (f",line={int(f.line)}" if f.line else "") + "," if f.file else ""
+        lines.append(f"::{GITHUB_COMMAND[f.severity]} {where}title={_workflow_property(f'{f.check_id} {f.title}')}::{_workflow_value(f.fix or f.message)}")
+    return lines
+
+
+def github_summary(result) -> str:
+    """The Markdown for a job summary. Nothing here comes from a code snippet."""
+    card = result.scorecard
+    counts = ", ".join(f"{card.counts[s.label]} {s.label}" for s in sorted(Severity, reverse=True) if card.counts.get(s.label))
+    lines = [f"## LadPock: {card.grade} ({card.overall}/100)", "", counts or "No open findings.", ""]
+    if result.findings:
+        lines += ["| Severity | Finding | Where |", "|---|---|---|"]
+        for f in sorted(result.findings, key=lambda f: -int(f.severity))[:50]:
+            where = f"`{f.location}`".replace("|", "\\|") if f.file else ""
+            lines.append(f"| {f.severity.label} | {f.title.replace('|', chr(92) + '|')} | {where} |")
+        if len(result.findings) > 50:
+            lines += ["", f"Showing the 50 most serious of {len(result.findings)}."]
+    if result.changes:
+        lines += ["", f"Since the last scan: {result.changes['fixed_count']} fixed, {len(result.changes['new'])} new."]
+    return "\n".join(lines) + "\n"
+
+
 def fix_prompt(project_name: str, findings: list[dict], limit: int = 25) -> str:
     """A paste-ready prompt for an AI coding assistant. Snippets are already masked."""
     order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "info": 4}

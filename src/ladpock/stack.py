@@ -28,7 +28,8 @@ LABELS = {
 DEEP_PACKS = {"nextjs", "react", "supabase", "firebase", "stripe", "github-actions", "tauri", "express", "fastify",
               "hono", "koa", "nestjs", "fastapi", "flask", "django", "docker", "kubernetes", "terraform", "electron",
               "react-native", "expo", "android", "ios", "flutter", "sveltekit", "remix", "nuxt", "astro", "spring", "rails",
-              "laravel", "aspnet", "go-web", "trpc", "convex", "graphql", "vercel", "netlify", "cloudflare", "aws-lambda"}
+              "laravel", "aspnet", "go-web", "trpc", "convex", "graphql", "vercel", "netlify", "cloudflare", "aws-lambda", "openai",
+              "anthropic", "ai-sdk", "nextauth", "vite"}
 
 _NPM = {
     "next": "nextjs", "react": "react", "vite": "vite", "express": "express", "fastify": "fastify",

@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, urlsplit
 
-from .. import __version__, advisories, probe, report, scoring, tauri
+from .. import __version__, advisories, probe, report, report_html, scoring, tauri
 from ..ai import keys as ai_keys
 from ..ai import online as ai_online
 from ..ai import review as ai_review
@@ -962,6 +962,24 @@ def api_advisories(app, db, match, query, body):
     return 200, {"advisories": [_hit_dict(h) for h in advisories.hits(db, kev.load(db), _project_id(match))]}
 
 
+def api_report(app, db, match, query, body):
+    row = db.get_project_by_id(_project_id(match))
+    scan = db.latest_scan(row["id"]) if row else None
+    if not scan:
+        raise ApiError(404, "Scan this project first")
+    summary = json.loads(scan["summary"] or "{}")
+    routes = []
+    if Path(row["path"]).is_dir():
+        routes = [{**r.to_dict(), "gaps": gaps(r)} for r in analyze(FileIndex(row["path"]))]
+    page = report_html.render(row["name"], grade=scan["grade"], score=scan["score"], profile=scan["profile"], started=scan["started_at"],
+                              categories=summary.get("categories", []), findings=db.scan_findings(scan["id"]),
+                              coverage=summary.get("coverage"), checks_run=summary.get("checks_run"), dependencies=summary.get("dependencies"),
+                              scanners=summary.get("scanners"), feeds=summary.get("feeds"), live=summary.get("live"), routes=routes,
+                              suppressed=summary.get("suppressed") or 0)
+    safe = re.sub(r"[^\w.-]+", "-", row["name"]).strip("-") or "project"
+    return 200, {"html": page, "filename": f"ladpock-report-{safe}.html"}
+
+
 def api_fix_prompt(app, db, match, query, body):
     row = db.get_project_by_id(_project_id(match))
     scan = db.latest_scan(row["id"]) if row else None
@@ -1028,6 +1046,7 @@ ROUTES: list[tuple[str, re.Pattern[str], Callable]] = [
     ("GET", re.compile(r"/api/projects/(\d+)/routes"), api_routes),
     ("GET", re.compile(r"/api/projects/(\d+)/advisories"), api_advisories),
     ("GET", re.compile(r"/api/projects/(\d+)/fix-prompt"), api_fix_prompt),
+    ("GET", re.compile(r"/api/projects/(\d+)/report"), api_report),
     ("POST", re.compile(r"/api/projects/(\d+)/suppress"), api_suppress),
     ("POST", re.compile(r"/api/projects/(\d+)/human"), api_human),
     ("GET", re.compile(r"/api/jobs/([0-9a-f]{32})"), api_job),

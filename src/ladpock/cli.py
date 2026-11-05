@@ -55,13 +55,30 @@ def cmd_scan(args, db: DB) -> int:
         _emit(json.dumps(result.to_dict(), indent=2), args.output)
     elif args.format == "sarif":
         _emit(json.dumps(report.to_sarif(result), indent=2), args.output)
+    elif args.format == "html":
+        _emit(report.to_html(result), args.output)
     else:
         _emit(report.render_scan(result, _style(args) if not args.output else report.Style(False), args.human), args.output)
+    if args.github:
+        _github_outputs(result)
     if args.fail_on:
         threshold = Severity.parse(args.fail_on)
         if any(f.severity >= threshold for f in result.findings):
             return 1
     return 0
+
+
+def _github_outputs(result) -> None:
+    """For GitHub Actions: marks on the changed lines, a job summary, and the grade as step outputs."""
+    for line in report.github_annotations(result):
+        print(line, file=sys.stderr)
+    summary, outputs = os.environ.get("GITHUB_STEP_SUMMARY"), os.environ.get("GITHUB_OUTPUT")
+    if summary:
+        with open(summary, "a", encoding="utf-8") as handle:
+            handle.write(report.github_summary(result))
+    if outputs:
+        with open(outputs, "a", encoding="utf-8") as handle:
+            handle.write(f"grade={result.scorecard.grade}\nscore={result.scorecard.overall}\nfindings={len(result.findings)}\n")
 
 
 def cmd_full_check(args, db: DB) -> int:
@@ -345,7 +362,10 @@ def build_parser() -> argparse.ArgumentParser:
     scan.add_argument("path", nargs="?", default=".")
     scan.add_argument("--profile", choices=sorted(PROFILES), default="standard",
                       help="how much to check (see the profiles above; default standard)")
-    scan.add_argument("--format", choices=["text", "json", "sarif"], default="text")
+    scan.add_argument("--format", choices=["text", "json", "sarif", "html"], default="text",
+                      help="html is a one-page report you can keep or pass on")
+    scan.add_argument("--github", action="store_true",
+                      help="in GitHub Actions, also mark findings on the changed lines and write a job summary and step outputs")
     scan.add_argument("--output", "-o", help="write the report to a file")
     scan.add_argument("--no-external", action="store_true", help="only run LadPock's built-in checks")
     scan.add_argument("--history", action="store_true", help="also search git history for secrets (needs gitleaks)")

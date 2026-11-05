@@ -1088,7 +1088,7 @@ function drawFindings(container, projectId, data, summary) {
 
   const scanners = (summary.scanners || []).map((s) => !s.available ? `${s.name} not installed` : s.ran ? `${s.name} ran` : `${s.name} failed`);
   const info = [`Built-in: ${summary.checks_run ?? "?"} checks`, ...scanners, `${summary.dependencies ?? 0} dependencies checked`];
-  container.append(h("p", { class: "faint" }, info.join(" · ")));
+  container.append(h("div", { class: "row spread" }, h("p", { class: "faint" }, info.join(" · ")), reportButton(projectId)));
   if (summary.suppressed) {
     container.append(h("p", { class: "faint", style: "color:var(--medium)" },
       `${plural(summary.suppressed, "finding")} hidden by 'accept risk' or ladpock-ignore comments. Check any you didn't add yourself.`));
@@ -1134,6 +1134,19 @@ function drawFindings(container, projectId, data, summary) {
   } }, "Copy fix prompt for all");
   container.append(h("div", { class: "toolbar" }, filters, search, category, copyAll), list);
   draw();
+}
+
+function reportButton(projectId) {
+  return h("button", { class: "btn small", title: "A one-page summary you can keep, print or send. Secrets are masked.", onclick: async () => {
+    const res = await api("GET", `/api/projects/${projectId}/report`);
+    const url = URL.createObjectURL(new Blob([res.html], { type: "text/html" }));
+    const link = h("a", { href: url, download: res.filename });
+    document.body.append(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10000);
+    toast(`Saved ${res.filename} to your downloads`);
+  } }, "Download report");
 }
 
 function liveCard(live) {
@@ -1325,7 +1338,7 @@ async function drawRoutes(container, id, view) {
   if (view !== state.view) return;
   if (!data.routes.length && !data.commands.length) {
     container.replaceChildren(h("div", { class: "card empty" }, h("h2", null, "No routes or commands found"),
-      h("p", { class: "muted" }, "This view understands Next.js, SvelteKit, Remix, Nuxt, Astro, Express, Fastify, Hono, Koa, NestJS, FastAPI, Flask, Django, Spring, Go, Rails, Laravel and ASP.NET routes, and Tauri commands.")));
+      h("p", { class: "muted" }, "This view understands Next.js, SvelteKit, Remix, Nuxt, Astro, Express, Fastify, Hono, Koa, NestJS, FastAPI, Flask, Django, Spring, Go, Rails, Laravel, ASP.NET, tRPC, Convex, GraphQL, Firebase Functions, Supabase Edge Functions, Vercel, Netlify, Cloudflare and AWS Lambda routes, and Tauri commands.")));
     return;
   }
   const cell = (value) => h("td", { class: value === "no" || value === "none" ? "cell-no" : value === "yes" || value === "sig" || value === "rls" || value === "dir" ? "cell-yes" : value === "mw" || value === "ext" ? "cell-mid" : "faint" }, value);
@@ -1513,7 +1526,7 @@ const HELP = [
       "Search git history: finds secrets that were committed and later deleted. Needs Gitleaks.",
       "Local AI review: a model on this computer reads your code for logic bugs. Free and private, but needs Ollama.",
       "Paid online AI review: Claude reads your code with secrets masked. Billed to your own Anthropic account, within a monthly budget you set.",
-      "Live checks against your running app: LadPock calls your app on this computer (never anywhere else) without logging in, to confirm which endpoints really answer, and checks headers, CORS, exposed files like .env and .git, error pages and sign-in rate limits. Requests that change data are only sent if you also tick that option, so use a development database for it. For the most realistic results, run a production build locally. With two test accounts it also tries to open one account's records as the other, which only reads, and flags admin endpoints that answer ordinary accounts.",
+      "Live checks against your running app: LadPock calls your app on this computer (never anywhere else) without logging in, to confirm which endpoints really answer, and checks headers, cookies, CORS, exposed files like .env and .git, error pages and sign-in rate limits. Requests that change data are only sent if you also tick that option, so use a development database for it. For the most realistic results, run a production build locally. It also sends a few harmless probes: a marker to see if it comes back as raw HTML, a stray quote to see if it breaks a database query, and a made-up address in redirect parameters. With two test accounts it tries to open one account's records as the other, which only reads, and flags admin endpoints that answer ordinary accounts and private answers marked cacheable.",
       "Paid online scanners: commercial services with your own account. Not available yet."],
     "A greyed-out toggle says why it can't be used right now, for example a missing scanner or no API key. Your choices are remembered for each project.",
   ]],
@@ -1534,7 +1547,7 @@ const HELP = [
     "Confidence is how sure LadPock is that it's real. High means the pattern is unambiguous, for example a live key in the code. Medium means it's probably real. Low means it's a heuristic that needs a human look, for example “this route doesn't seem to check ownership”.",
   ]],
   ["coverage", "Deep checks and generic checks", [
-    "Some stacks have dedicated packs that understand how the framework works: Next.js, React, Supabase, Firebase and Stripe; SvelteKit, Remix, Nuxt and Astro; Express, Fastify, Hono, Koa and NestJS; FastAPI, Flask and Django; Spring, Go, Rails, Laravel and ASP.NET; Tauri and Electron; Android, iOS, React Native and Flutter; and Docker, Kubernetes, Terraform and GitHub Actions.",
+    "Some stacks have dedicated packs that understand how the framework works: Next.js, React, Supabase, Firebase and Stripe; SvelteKit, Remix, Nuxt and Astro; Express, Fastify, Hono, Koa and NestJS; FastAPI, Flask and Django; Spring, Go, Rails, Laravel and ASP.NET; tRPC, Convex, GraphQL and serverless functions; AI features; Tauri and Electron; Android, iOS, React Native and Flutter; and Docker, Kubernetes, Terraform and GitHub Actions.",
     "Go, PHP, Ruby, Java/Kotlin, C# and Rust get language-specific versions of the injection, crypto and config checks. Everything else gets the generic checks: secrets, dependencies, injection patterns, config and AI code smells.",
     "Each project page lists which stacks got deep checks, so you know how thorough a scan was.",
   ]],
@@ -1568,7 +1581,7 @@ const HELP = [
     "Versions only change when LadPock is updated, in a reviewed change. If you installed a scanner yourself, LadPock uses yours and leaves it alone.",
   ]],
   ["routes", "Routes and commands", [
-    "The Routes tab lists every API route: Next.js handlers and server actions; SvelteKit, Remix, Nuxt and Astro endpoints and form actions; Express, Fastify, Hono and Koa routes; NestJS controllers; FastAPI, Flask and Django views; and Spring, Go, Rails, Laravel and ASP.NET routes. For each one it shows whether the handler checks who's calling (Auth), whether it checks the record belongs to them (Owner), whether input is validated, and whether there's a rate limit.",
+    "The Routes tab lists every API route: Next.js handlers and server actions; SvelteKit, Remix, Nuxt and Astro endpoints and form actions; Express, Fastify, Hono and Koa routes; NestJS controllers; FastAPI, Flask and Django views; Spring, Go, Rails, Laravel and ASP.NET routes; and backends with no server of your own: tRPC procedures, Convex functions, GraphQL resolvers, Firebase and Supabase functions, and Vercel, Netlify, Cloudflare and AWS Lambda functions. For each one it shows whether the handler checks who's calling (Auth), whether it checks the record belongs to them (Owner), whether input is validated, and whether there's a rate limit.",
     "For Tauri, the Commands tab lists every command the app's web page can call. For each one it shows what input it takes from the page, whether it reads or writes files, whether it checks a path is inside an allowed folder, and whether it starts programs.",
     "Both are heuristic. Read “no” as “go and look”.",
   ]],
