@@ -370,6 +370,25 @@ worse than a `package.json` holding `{"dependencies": 5}`, and a hang in a regex
 **More kinds of software.** Notebooks are read up to 20 MB, because saved charts make them big and keys can sit in any cell or output. MCP tools are flagged because a model
 picks their arguments, and any text it reads can steer that, so a tool taking a whole command is remote code execution with extra steps.
 
+## Following request data (0.17.0)
+
+**The gap.** Measured before building: of 22 bugs written the way generated code usually writes them, split over two or three lines, the line-at-a-time checks caught 3.
+
+**`checks/flows.py`.** A small taint tracker, not a parser. It joins continuation lines into statements, then walks them keeping a list of variables that hold request data.
+- **Scope is judged by indentation.** A variable leaves when a line is less indented than where it was declared, which is reliable in generated code and needs no parser per language.
+  Every variable is recorded, tainted or not, so `q += name` inside an `if` block taints the `q` declared outside it.
+- **Strings are read for what's interpolated into them, not their words.** `"SELECT name FROM users"` doesn't use a variable called `name`, but `${name}` and `{name}` do, and each language has its own rules
+  (PHP's single quotes don't interpolate, Python's need an `f`).
+- **Taint stops at unknown calls.** `PASSES_ALONG` lists what really passes text along (`trim`, `path.join`, `Sprintf`). Anything else might return a database row or a user object, so `redirect(user.homepage)` isn't reported.
+  This is the main trade: it misses values passed through your own helpers, in exchange for very few false alarms.
+- **SQL needs SQL.** A sink fires only if the value was written into text containing SQL, checked per argument, so `db.query(sql, [id])` is quiet.
+- **SSRF and redirects need control of the start.** `https://api.example.com/${id}` can't change the host, and `/login?next=${x}` stays on this site.
+- **Guards clear a value** when a conditional mentions it with an allow-list or validation word. It isn't proof the check is right, and a reviewer might disagree, but a false alarm here costs more than the miss.
+- **Not reported twice.** A line that a pattern check already reports is dropped, so the two kinds of check don't double-count.
+
+`tests/test_flows.py` pins about 130 samples: bugs it must find, and safe code that looks similar. It caught its own design mistakes on the first run: a variable called `uuid` counting as sanitised,
+a database row carrying taint, and `+=` inside a block losing the outer variable.
+
 ## Next milestones
 
 1. **Paid online scanners.** Optional integrations with commercial scanners using your own account, behind the same

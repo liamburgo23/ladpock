@@ -1577,6 +1577,7 @@ const HELP = [
   ]],
   ["coverage", "Deep checks and generic checks", [
     "Some stacks have dedicated packs that understand how the framework works: Next.js, React, Supabase, Firebase and Stripe; SvelteKit, Remix, Nuxt and Astro; Express, Fastify, Hono, Koa and NestJS; FastAPI, Flask and Django; Spring, Go, Rails, Laravel and ASP.NET; tRPC, Convex, GraphQL and serverless functions; AI features; Tauri and Electron; Android, iOS, React Native and Flutter; and Docker, Kubernetes, Terraform and GitHub Actions.",
+    "LadPock also follows request data through variables inside a function, so it catches a bug split over several lines, such as a query built from a request value and run a few lines later. It stops at function boundaries and at calls it doesn't recognise, so it can miss some, which is what an AI review or a data-flow scanner like Opengrep adds.",
     "Go, PHP, Ruby, Java/Kotlin, C# and Rust get language-specific versions of the injection, crypto and config checks. Everything else gets the generic checks: secrets, dependencies, injection patterns, config and AI code smells.",
     "Each project page lists which stacks got deep checks, so you know how thorough a scan was.",
   ]],

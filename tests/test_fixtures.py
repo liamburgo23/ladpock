@@ -53,6 +53,7 @@ EXPECTED_APPS = {
     "LP-ELEC-008", "LP-ELEC-009", "LP-MOB-001", "LP-MOB-002", "LP-MOB-003", "LP-MOB-004", "LP-MOB-005",
 }
 EXPECTED_POLYGLOT = {"LP-AUTHZ-006", "LP-CFG-007", "LP-CFG-008", "LP-ABUSE-005"}
+EXPECTED_FLOWS = {f"LP-FLOW-00{i}" for i in range(1, 9)}
 EXPECTED_FUNCTIONS = {
     "LP-AI-001", "LP-AI-002", "LP-AI-003", "LP-AI-004", "LP-AI-005", "LP-UPLOAD-001", "LP-UPLOAD-002", "LP-UPLOAD-003", "LP-LOG-001",
     "LP-AUTHZ-007", "LP-AUTHZ-008", "LP-AUTHZ-009", "LP-AUTHZ-010", "LP-SEC-008", "LP-SEC-009", "LP-AUTH-012", "LP-AUTH-013",
@@ -95,7 +96,7 @@ class VulnerableFixture(unittest.TestCase):
 
     def test_catalogue_is_fully_covered(self):
         untested = (set(REGISTRY) - EXPECTED_VULN - EXPECTED_TAURI - EXPECTED_NODE - EXPECTED_PYTHON - EXPECTED_INFRA
-                    - EXPECTED_APPS - EXPECTED_POLYGLOT - EXPECTED_FUNCTIONS - EXPECTED_NATIVE - NOT_IN_OFFLINE_FIXTURE)
+                    - EXPECTED_APPS - EXPECTED_POLYGLOT - EXPECTED_FUNCTIONS - EXPECTED_NATIVE - EXPECTED_FLOWS - NOT_IN_OFFLINE_FIXTURE)
         self.assertEqual(sorted(untested), [], "add these checks to a vulnerable fixture")
 
     def test_secrets_are_masked_in_output(self):
@@ -120,7 +121,7 @@ class VulnerableFixture(unittest.TestCase):
 class CleanFixture(unittest.TestCase):
     def test_clean_apps_have_no_findings(self):
         for name in ("clean-next-supabase", "clean-tauri", "clean-node-api", "clean-python-web", "clean-infra",
-                     "clean-electron", "clean-mobile", "clean-polyglot", "clean-fullstack", "clean-functions", "clean-starters", "clean-native"):
+                     "clean-electron", "clean-mobile", "clean-polyglot", "clean-fullstack", "clean-functions", "clean-starters", "clean-native", "clean-flows"):
             with self.subTest(name), materialize(name) as tmp:
                 findings, errors = run_all(_context(Path(tmp) / name))
                 self.assertEqual(errors, [])
@@ -327,6 +328,21 @@ class NativeAndMoreFrameworks(unittest.TestCase):
                 self.assertIn(key, routes)
                 self.assertEqual((routes[key].auth, routes[key].owner), (auth, owner))
         self.assertTrue(routes[("jaxrs", "GET", "/api/accounts/plans")].public)  # @PermitAll beats the class's @RolesAllowed
+
+
+class RequestDataFlows(unittest.TestCase):
+    def test_every_kind_is_found_in_a_realistic_app(self):
+        with materialize("vuln-flows") as tmp:
+            findings, errors = run_all(_context(Path(tmp) / "vuln-flows"))
+        self.assertEqual(errors, [])
+        self.assertEqual(sorted(EXPECTED_FLOWS - {f.check_id for f in findings}), [])
+        by_file = {(f.check_id, f.file) for f in findings}
+        for check_id in ("LP-FLOW-001", "LP-FLOW-002", "LP-FLOW-003", "LP-FLOW-004", "LP-FLOW-005", "LP-FLOW-008"):
+            with self.subTest(check_id):  # the same bugs, in both languages
+                self.assertTrue((check_id, "server/orders.js") in by_file or (check_id, "server/reports.py") in by_file)
+        for f in findings:
+            if f.check_id.startswith("LP-FLOW"):
+                self.assertIn("line", f.message)  # says where the value came from
 
 
 class Starters(unittest.TestCase):

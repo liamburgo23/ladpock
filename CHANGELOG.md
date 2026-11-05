@@ -3,6 +3,12 @@
 All notable changes to LadPock. Versions follow [semantic versioning](https://semver.org/); while LadPock is below
 1.0, minor versions can include changes to checks and grades.
 
+## [0.17.0] - 2026-11-05
+
+### Added
+- LadPock now follows request data through variables inside a function, so it catches bugs split over several lines: SQL built in a variable and run later, shell commands, file paths, outgoing
+  requests, redirects, `eval`, HTML and templates. Works in JavaScript/TypeScript, Python, PHP, Go, Java/Kotlin, C# and Ruby, and each finding says which lines the value travelled through.
+
 ## [0.16.0] - 2026-11-05
 
 ### Added
@@ -227,6 +233,7 @@ All notable changes to LadPock. Versions follow [semantic versioning](https://se
   EPSS with "new since you last looked"; hallucinated-package detection; grades; fix prompts; JSON and SARIF
   output; and support for Gitleaks, OSV-Scanner and Opengrep.
 
+[0.17.0]: https://github.com/liamburgo23/ladpock/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/liamburgo23/ladpock/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/liamburgo23/ladpock/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/liamburgo23/ladpock/compare/v0.13.0...v0.14.0

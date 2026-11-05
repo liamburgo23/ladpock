@@ -58,6 +58,11 @@ def _names_in(module: str) -> frozenset[str]:
     return frozenset(_auth_names(module))
 
 
+@lru_cache(maxsize=4)
+def _uses_paid_api(module: str) -> bool:
+    return bool(PAID_API.search(module))
+
+
 def _assess(route: Route, body: str, module: str, *, authed: bool = False, validated: bool = False) -> Route:
     """The common questions, once a function's body has been found."""
     names = _names_in(module)
@@ -68,7 +73,7 @@ def _assess(route: Route, body: str, module: str, *, authed: bool = False, valid
     route.db = bool(DB.search(body) or FIREBASE_DB.search(body) or D1.search(body))
     route.mutates = route.db and bool(MUTATION.search(body) or SQL_WRITE.search(body)
                                       or (FIREBASE_DB.search(body) and WRITE_WORDS.search(body)))
-    route.paid_api = bool(PAID_API.search(module) and PAID_CALL.search(body))
+    route.paid_api = bool(_uses_paid_api(module) and PAID_CALL.search(body))
     route.dynamic = route.dynamic or bool(ID_INPUT.search(body))
     if route.db and (route.dynamic or route.mutates):
         route.owner = "yes" if OWNER.search(body) or OWNER_MORE.search(body) else "no"
@@ -168,7 +173,7 @@ def convex_routes(index: FileIndex) -> list[Route]:
             route.db = bool(CONVEX_DB.search(body) or re.search(r"\bctx\.run(?:Query|Mutation)\(", body))
             route.mutates = bool(CONVEX_WRITE.search(body) or "runMutation" in body)
             route.dynamic = bool(CONVEX_ID_ARG.search(body))
-            route.paid_api = bool(PAID_API.search(code) and PAID_CALL.search(body))
+            route.paid_api = bool(_uses_paid_api(code) and PAID_CALL.search(body))
             if route.db and (route.dynamic or route.mutates):
                 route.owner = "yes" if CONVEX_OWNER.search(body) else "no"
             if route.mutates:

@@ -27,9 +27,12 @@ CRITICAL (6)
 
 ## What it does
 
-- **201 built-in checks** across secrets, sign-in, authorization, API abuse and cost, injection, payments,
+- **209 built-in checks** across secrets, sign-in, authorization, API abuse and cost, injection, payments,
   crypto, config, supply chain, and AI-generated code smells. Run `ladpock checks` for the list, or see
   [docs/CHECKS.md](docs/CHECKS.md).
+- **Follows request data across lines.** Generated code rarely writes a bug on one line. LadPock tracks a value from the request through
+  variables to the SQL query, shell command, file path, outgoing request, redirect, `eval` or page it ends up in, in JavaScript/TypeScript, Python,
+  PHP, Go, Java/Kotlin, C# and Ruby, and says which lines it travelled through.
 - **A route matrix** for Next.js (App Router, Pages API and server actions), SvelteKit, Remix, Nuxt, Astro, Express,
   Fastify, Hono, Koa, NestJS, FastAPI, Flask, Django, Spring, Go (net/http, chi, gin, echo, fiber, gorilla/mux), Rails,
   Laravel and ASP.NET, plus backends with no server of your own: tRPC, Convex, GraphQL resolvers, Firebase Cloud Functions,
@@ -359,7 +362,7 @@ won't replace an existing hook unless you pass `--force`; `ladpock hook remove` 
 ### In CI
 
 ```yaml
-- uses: liamburgo23/ladpock@v0.16.0
+- uses: liamburgo23/ladpock@v0.17.0
   with:
     fail-on: high   # critical, high, medium or low; leave empty to never fail
 ```
@@ -381,7 +384,7 @@ ladpock scan . --write-baseline .ladpock-baseline.json
 ```
 
 ```yaml
-- uses: liamburgo23/ladpock@v0.16.0
+- uses: liamburgo23/ladpock@v0.17.0
   with:
     baseline: .ladpock-baseline.json
 ```
@@ -449,6 +452,9 @@ masked, and your folder path isn't included. It does contain code snippets, so s
 Each scan says which stacks got deep checks, so you know how thorough it was.
 
 ## Honest limits
+
+Tracking request data stays inside one function and stops at any call it doesn't recognise, so a value passed through your own helper is missed. That keeps
+false alarms very low, at the cost of some real bugs. The AI reviews and Opengrep can follow what it doesn't.
 
 Analysis that reads code's structure skips files over 400 KB and minified files, and stops at 300 routes per file. That's what
 keeps a huge bundle or a hostile file from stalling a scan. Line-by-line checks, including secret detection, still read them.

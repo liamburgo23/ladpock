@@ -132,14 +132,14 @@ def js_framework_routes(index: FileIndex) -> list[Route]:
                 if close != -1:
                     spans.append((open_idx, close, group.group(2)))
             matches = list(capped(ELYSIA_ROUTE.finditer(code)))
+            plugin = re.search(r"\.use\(\s*\w*(?:auth|protect|guard)", code)  # protects the routes registered after it
             for i, match in enumerate(matches):
                 end = matches[i + 1].start() if i + 1 < len(matches) else len(code)
                 body = code[match.start(): min(end, match.start() + 60_000)]
                 prefix = "".join(p for start, stop, p in spans if start < match.start() < stop)
                 route = Route(match.group(1).upper(), prefix + match.group(3), rel, line_of(code, match.start()), "elysia",
                               dynamic=":" in match.group(3))
-                head = code[:match.start()]
-                routes.append(_assess_js(route, body, code, authed=bool(ELYSIA_AUTH.search(body) or re.search(r"\.use\(\s*\w*(?:auth|protect|guard)", head)),
+                routes.append(_assess_js(route, body, code, authed=bool(ELYSIA_AUTH.search(body) or (plugin and plugin.start() < match.start())),
                                          validated=bool(re.search(r"\bbody\s*:\s*t\.", body))))
         elif "@hapi/hapi" in raw or "hapi" in raw and "server.route" in raw:
             code = strip_comments(raw)

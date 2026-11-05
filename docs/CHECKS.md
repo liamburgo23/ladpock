@@ -125,6 +125,14 @@ Generated with `ladpock checks --markdown`.
 | `LP-AI-008` | MCP tool runs commands or touches files the model chose | high | mcp |
 | `LP-ELEC-005` | Link opened in the system without checking the address | medium | electron |
 | `LP-ELEC-009` | IPC handler uses page input for files or programs | medium | electron |
+| `LP-FLOW-001` | Request data reaches a SQL query | high | all projects |
+| `LP-FLOW-002` | Request data reaches a shell command | high | all projects |
+| `LP-FLOW-003` | Request data chooses a file path | high | all projects |
+| `LP-FLOW-004` | Request data chooses where your server connects | high | all projects |
+| `LP-FLOW-005` | Request data chooses where the browser is sent | medium | all projects |
+| `LP-FLOW-006` | Request data runs as code | critical | all projects |
+| `LP-FLOW-007` | Request data put into a page as HTML | medium | all projects |
+| `LP-FLOW-008` | Request data used as a template | high | all projects |
 | `LP-INJ-001` | HTML injected without sanitising | medium | all projects |
 | `LP-INJ-002` | Code or shell command built from input | high | all projects |
 | `LP-INJ-003` | SQL query built from strings | high | all projects |

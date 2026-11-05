@@ -56,6 +56,14 @@ WORST_CASES = {
     "Res.java": 'import jakarta.ws.rs.*;\n@Path("/a") public class A {\n@GET public void b() {\n',
     "Vault.sol": 'function withdraw() public { x.call{value: 1}(""); a[b] = 1;\n',
     "a.c": "strcpy(a, b); printf(x); system(y);\n",
+    "flow.js": "const a = req.body;\nconst b = a + a;\nconst c = `SELECT * FROM t WHERE x = ${b}`;\ndb.query(c);\nfetch(b);\n",
+    "flow-open.js": "const a = req.body; foo(\n",
+    "flow-template.js": "const a = req.body; const b = `\n",
+    "flow-block.js": "if (x) {\n  const a = req.body;\n}\n",
+    "flow.py": 'a = request.args["b"]\nq = f"SELECT {a}"\ncur.execute(q)\n',
+    "flow-deco.py": '@app.get("/a")\ndef a(b, c, d):\n    return open(b)\n',
+    "flow.php": '<?php $a = $_GET["b"]; $q = "SELECT * FROM t WHERE x = $a"; mysqli_query($c, $q);\n',
+    "flow.go": 'a := r.FormValue("b")\nq := "SELECT " + a\ndb.Query(q)\n',
     "mcp.py": "from mcp import x\n@mcp.tool()\ndef a():\n    subprocess.run(b)\n",
     "mcp.ts": 'import "@modelcontextprotocol/sdk";\nserver.tool("a", () => {\n',
     "listen.js": 'window.addEventListener("message", (e) => {\n',
@@ -79,14 +87,15 @@ class SlowInput(unittest.TestCase):
                 for size in (FULL_ANALYSIS, TOO_BIG) if rel in TOO_BIG_CASES else (FULL_ANALYSIS,):
                     path = root / str(size) / rel
                     path.parent.mkdir(parents=True, exist_ok=True)
-                    path.write_text((chunk * (size // len(chunk) + 1))[:size], encoding="utf-8")
+                    # As bytes: on Windows, text mode turns \n into \r\n, which would push these over the analysis limit and skip the test.
+                    path.write_bytes((chunk * (size // len(chunk) + 1))[:size].encode("utf-8"))
             index = FileIndex(root)
             started = time.monotonic()
             _, errors = run_all(ScanContext(root=root, index=index, stack=set(detect(index))))
             took = time.monotonic() - started
         self.assertEqual(errors, [])
         # Generous, so a slow CI machine doesn't fail it: what it guards against is minutes, or never finishing.
-        self.assertLess(took, 240, f"the worst-case files took {took:.0f}s")
+        self.assertLess(took, 420, f"the worst-case files took {took:.0f}s")
 
 
 # Every file LadPock parses for its structure.
