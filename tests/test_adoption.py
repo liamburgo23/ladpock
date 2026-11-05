@@ -179,6 +179,21 @@ class KeyFiles(unittest.TestCase):
             self.assertEqual([f for f in found if f.check_id == "LP-SEC-010"], [])
 
 
+class OddPackageNames(unittest.TestCase):
+    def test_a_name_cant_leave_the_registry_path(self):
+        from unittest import mock
+
+        from ladpock.feeds import registry
+
+        with mock.patch.object(registry.http, "request", return_value=(404, None, None)) as request:
+            registry._exists("PyPI", "../../evil?x=1")
+            registry._exists("npm", "@scope/../../evil")
+        for call in request.call_args_list:
+            url = call.args[0]
+            self.assertNotIn("../", url)
+            self.assertNotIn("?", url)
+
+
 class BillOfMaterials(unittest.TestCase):
     def test_package_urls(self):
         for component, expected in (

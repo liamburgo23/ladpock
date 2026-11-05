@@ -155,6 +155,34 @@ class OddFiles(unittest.TestCase):
                     problems.append(f"{label}: CRASH {type(exc).__name__}: {str(exc)[:150]}")
         self.assertEqual(problems, [])
 
+    def test_the_whole_scan_and_every_report(self):
+        """From scan to stored results to each output format, because a bad value can get a long way before something trips on it."""
+        from helpers import isolated_home
+
+        from ladpock import report
+        from ladpock.db import DB
+        from ladpock.scan import run_scan
+
+        home = isolated_home()
+        db = DB()
+        try:
+            for text in (ODD_TEXT[11], ODD_TEXT[12], ODD_TEXT[13], ODD_TEXT[15], "[" * 200_000, "\x00\x01\x02binary"):
+                with self.subTest(text[:40]), tempfile.TemporaryDirectory(prefix="ladpock-odd-") as tmp:
+                    root = Path(tmp) / "odd"
+                    for rel in PARSED:
+                        path = root / rel
+                        path.parent.mkdir(parents=True, exist_ok=True)
+                        path.write_bytes(text.encode("utf-8", "replace"))
+                    result = run_scan(root, db, offline=True, external=False, log=lambda _: None)
+                    # "Couldn't read Cargo.lock" is the right thing to tell someone. A check or a route reader failing isn't.
+                    self.assertEqual([e for e in result.errors if e.startswith("LP-") or "read routes" in e], [])
+                    for output in (report.to_html(result), report.github_summary(result), report.to_sarif(result), result.to_dict(),
+                                   report.render_scan(result, report.Style(False))):
+                        self.assertTrue(output)
+        finally:
+            db.close()
+            home.cleanup()
+
 
 if __name__ == "__main__":
     unittest.main()

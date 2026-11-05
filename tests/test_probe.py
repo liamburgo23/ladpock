@@ -597,6 +597,69 @@ class Correlation(unittest.TestCase):
             home.cleanup()
 
 
+class DashboardResults(unittest.TestCase):
+    """What the dashboard shows after a scan with two test accounts, and after one without."""
+
+    def setUp(self):
+        from ladpock.ui.server import make_server
+
+        self.home = isolated_home()
+        self.db = DB()
+        self.server = make_server(0, "test-token")
+        self.tmp = materialize("vuln-next-supabase")
+        self.root = Path(self.tmp.name) / "vuln-next-supabase"
+        self.addCleanup(self.home.cleanup)
+        self.addCleanup(self.tmp.cleanup)
+        self.addCleanup(self.db.close)
+        self.addCleanup(self.server.server_close)
+
+    def scan(self, **kwargs):
+        from ladpock.ui.server import project_payload
+
+        live, url = serve(TwoUsers)
+        try:
+            run_scan(self.root, self.db, offline=True, external=False, log=lambda _: None, live_url=url, **kwargs)
+        finally:
+            live.shutdown()
+            live.server_close()
+        return project_payload(self.server.app, self.db, self.db.get_project(self.root)["id"])
+
+    def test_the_manual_check_shows_what_was_tried(self):
+        payload = self.scan(live_user_a=ALICE, live_user_b=BOB)
+        item = next(i for i in payload["human"] if i["id"] == "H-11")
+        self.assertIn("with two test accounts", item["evidence"])
+        self.assertIsNone(item["checked_at"])  # it informs the tick, it doesn't tick it
+        self.assertNotIn("accounts", {g["id"] for g in payload["assessment"]["gaps"]})
+        self.assertTrue(any(f["check_id"] == "LP-LIVE-008" for f in payload["findings"]))
+
+    def test_without_accounts_it_says_what_was_left_out(self):
+        payload = self.scan()
+        item = next(i for i in payload["human"] if i["id"] == "H-11")
+        self.assertNotIn("evidence", item)
+        self.assertIn("accounts", {g["id"] for g in payload["assessment"]["gaps"]})
+
+    def test_code_findings_show_the_live_result(self):
+        payload = self.scan(live_user_a=ALICE, live_user_b=BOB)
+        confirmed = [f for f in payload["findings"] if f["check_id"] == "LP-AUTHZ-002" and (f.get("extra") or {}).get("live") == "confirmed"]
+        self.assertTrue(confirmed)
+        self.assertEqual(confirmed[0]["confidence"], "high")
+
+    def test_report_button(self):
+        import re
+
+        from ladpock.ui.server import api_report
+
+        self.scan(live_user_a=ALICE, live_user_b=BOB)
+        project = self.db.get_project(self.root)["id"]
+        status, body = api_report(self.server.app, self.db, re.match(r"/api/projects/(\d+)/report", f"/api/projects/{project}/report"), {}, {})
+        self.assertEqual(status, 200)
+        self.assertEqual(body["filename"], "ladpock-report-vuln-next-supabase.html")
+        self.assertIn("Two test accounts", body["html"])
+        self.assertNotIn(str(self.root), body["html"])
+        for secret in ("alice-cookie", "bob-token"):
+            self.assertNotIn(secret, json.dumps(body))
+
+
 class Options(unittest.TestCase):
     def test_panel_options(self):
         from ladpock.ui.server import ApiError, run_options

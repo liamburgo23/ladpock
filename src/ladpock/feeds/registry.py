@@ -19,7 +19,7 @@ def _exists(ecosystem: str, name: str) -> bool | None:
             url = f"https://registry.npmjs.org/-/package/{urllib.parse.quote(name, safe='@')}/dist-tags"
             status, _, _ = http.request(url, timeout=20)
         elif ecosystem == "PyPI":
-            status, _, _ = http.request(f"https://pypi.org/simple/{urllib.parse.quote(name)}/", method="HEAD", timeout=20)
+            status, _, _ = http.request(f"https://pypi.org/simple/{urllib.parse.quote(name, safe='')}/", method="HEAD", timeout=20)
         else:
             return None
     except http.FeedError:
