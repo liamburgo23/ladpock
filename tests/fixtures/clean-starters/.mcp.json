@@ -1,0 +1,1 @@
+{"mcpServers": {"ladpock": {"command": "ladpock", "args": ["mcp"]}, "docs": {"command": "npx", "args": ["-y", "docs-mcp@2.1.0"]}}}

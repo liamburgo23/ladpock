@@ -115,7 +115,7 @@ class VulnerableFixture(unittest.TestCase):
 class CleanFixture(unittest.TestCase):
     def test_clean_apps_have_no_findings(self):
         for name in ("clean-next-supabase", "clean-tauri", "clean-node-api", "clean-python-web", "clean-infra",
-                     "clean-electron", "clean-mobile", "clean-polyglot", "clean-fullstack", "clean-functions"):
+                     "clean-electron", "clean-mobile", "clean-polyglot", "clean-fullstack", "clean-functions", "clean-starters"):
             with self.subTest(name), materialize(name) as tmp:
                 findings, errors = run_all(_context(Path(tmp) / name))
                 self.assertEqual(errors, [])
@@ -257,6 +257,38 @@ class PolyglotFixture(unittest.TestCase):
         self.assertEqual(files("LP-AUTH-003"), {"php", "java"})  # md5 / MessageDigest for passwords
         self.assertIn("java", files("LP-CFG-001"))  # @CrossOrigin(origins = "*")
         self.assertIn("go", files("LP-CRYPTO-001"))  # math/rand for a reset token
+
+
+class Starters(unittest.TestCase):
+    """Correct code written the way the usual starter templates write it. Nothing should be said about it."""
+
+    def routes(self):
+        with materialize("clean-starters") as tmp:
+            return {(r.kind, r.method, r.path): r for r in analyze(FileIndex(Path(tmp) / "clean-starters"))}
+
+    def test_the_url_carrying_trpc_isnt_an_endpoint(self):
+        routes = self.routes()
+        self.assertFalse(any(kind != "trpc" and "/trpc" in path for kind, _, path in routes))
+        self.assertIn(("trpc", "POST", "/api/trpc/post.create"), routes)
+
+    def test_trpc_query_isnt_a_database_query(self):
+        routes = self.routes()
+        self.assertFalse(routes[("trpc", "GET", "/api/trpc/post.hello")].db)
+        self.assertTrue(routes[("trpc", "GET", "/api/trpc/post.list")].db)
+
+    def test_what_protects_each_route_is_understood(self):
+        routes = self.routes()
+        for key, auth, owner in (
+            (("trpc", "GET", "/api/trpc/order.byId"), "yes", "yes"), (("route", "DELETE", "/api/notes/[id]"), "yes", "yes"),
+            (("express", "DELETE", "/api/orders/:id"), "yes", "yes"), (("fastapi", "GET", "/items/{item_id}"), "yes", "yes"),
+            (("django", "GET", "/orders/<int:pk>/"), "yes", "yes"), (("convex", "POST", "convex/tasks:create"), "yes", "yes"),
+            (("firebase-fn", "POST", "functions/addNote"), "yes", "yes"), (("graphql", "POST", "graphql/Mutation.renameMe"), "yes", "yes"),
+        ):
+            with self.subTest(key):
+                self.assertEqual((routes[key].auth, routes[key].owner), (auth, owner))
+        self.assertEqual(routes[("route", "POST", "/api/stripe/webhook")].auth, "sig")
+        self.assertEqual(routes[("route", "GET", "/api/cron/daily")].auth, "sig")
+        self.assertTrue(routes[("hono", "GET", "/api/notes")].db)  # Cloudflare D1
 
 
 class FunctionBackends(unittest.TestCase):

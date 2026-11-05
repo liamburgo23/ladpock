@@ -47,7 +47,7 @@ JS_VALIDATION = re.compile(
 JS_DB = re.compile(
     r"\bprisma\.\w+\.|\bdb\.\w+|\bknex\b|\bsequelize\b|\b[A-Z]\w*\.(?:find\w*|create|insert\w*|update\w*|delete\w*|destroy|"
     r"upsert|count\w*|aggregate|bulkCreate|exists)\(|\bsql`|\.from\(\s*['\"`]|\b(?:pool|client|conn|connection|tx)\.query\(|"
-    r"getRepository|\.collection\(|\w+(?:Repository|repo)\.\w+\(|\bthis\.\w+(?:Model|Repository)\.\w+\("
+    r"getRepository|\.collection\(|\w+(?:Repository|repo)\.\w+\(|\bthis\.\w+(?:Model|Repository)\.\w+\(|\benv\.\w+\.prepare\("
 )
 JS_MUTATION = re.compile(
     r"\.(?:insert|insertOne|insertMany|update|updateOne|updateMany|upsert|delete|deleteOne|deleteMany|destroy|create|"

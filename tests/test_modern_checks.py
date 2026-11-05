@@ -76,6 +76,7 @@ FIRES = [
     ("a.js", "zip.extractAllTo(dir, true);", "LP-INJ-013"),
     ("a.js", "sendMail({ to: req.body.email, text });", "LP-ABUSE-012"),
     ("a.js", "sequelize.sync({ force: true });", "LP-VIBE-007"),
+    ("a.js", 'const hash = crypto.createHash("sha256").update(password);', "LP-AUTH-003"),
     ("a.py", "db.drop_all()", "LP-VIBE-007"),
     ("a.ts", "new DataSource({ synchronize: true });", "LP-VIBE-007"),
     ("Procfile", "web: rails db:reset && rails server", "LP-VIBE-007"),
@@ -157,6 +158,8 @@ QUIET = [
     ("a.js", "track({ to: req.body.page });", "LP-ABUSE-012"),  # not sending a message
     ("a.js", 'if (process.env.NODE_ENV === "test") sequelize.sync({ force: true });', "LP-VIBE-007"),
     ("a.js", "sequelize.sync({ alter: false });", "LP-VIBE-007"),
+    ("a.js", 'const hash = crypto.createHash("sha256").update(resetToken); // password reset', "LP-AUTH-003"),
+    ("policy.sql", "create table public.posts (id int);\nalter table public.posts enable row level security;\ncreate policy p on public.posts for select using (true);\n-- supabase", "LP-SUPA-002"),
     ("a.rb", "config.force_ssl = true", "LP-CFG-010"),
     ("a.cs", "options.RequireHttpsMetadata = !env.IsDevelopment();", "LP-CFG-010"),
     ("application.properties", "spring.h2.console.enabled=false", "LP-CFG-011"),

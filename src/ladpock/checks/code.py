@@ -104,6 +104,8 @@ regex_check(
             r"MessageDigest\.getInstance\(\s*\"(?:MD5|SHA-?1|SHA-?256|SHA-?512)\"|\b(?:MD5|SHA1|SHA256|SHA512)\.(?:Create|HashData)\(|"
             r"Digest::(?:MD5|SHA1|SHA256)|\b(?:md5|sha1|sha256|sha512)\.Sum(?:256|512)?\(",
     near_pattern=r"(?i)passw", cwe=("CWE-916",),
+    # A fast hash is right for a long random token, such as a password-reset link's: there's nothing to guess.
+    unless=r"(?i)token|checksum|etag|fingerprint",
 )
 
 regex_check(

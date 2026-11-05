@@ -285,6 +285,11 @@ def analyze(index: FileIndex) -> list[Route]:
     routes.extend(analyze_fullstack(index))
     routes.extend(analyze_backends(index))
     routes.extend(analyze_functions(index))
+    # The URL that carries tRPC or GraphQL isn't an endpoint of its own: each procedure and resolver is listed instead.
+    if any(r.kind == "trpc" for r in routes):
+        routes = [r for r in routes if r.kind == "trpc" or not re.search(r"/trpc(?:/|$)", r.path)]
+    if any(r.kind == "graphql" for r in routes):
+        routes = [r for r in routes if r.kind == "graphql" or not re.search(r"/graphql/?$", r.path)]
     routes.sort(key=lambda r: (r.kind == "action", r.path, METHODS.index(r.method) if r.method in METHODS else 99))
     return routes
 

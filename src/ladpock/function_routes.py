@@ -124,7 +124,9 @@ def trpc_routes(index: FileIndex) -> list[Route]:
             base = match.group(2).rsplit(".", 1)[-1]
             route = Route("GET" if kind.group(1) == "query" else "POST", path, rel, line_of(code, match.start()), "trpc")
             authed = bool(AUTHED_PROCEDURE.search(base) or PROCEDURE_GUARD.search(body) or TRPC_AUTH.search(body))
-            routes.append(_assess(route, body, code, authed=authed, validated=".input(" in body))
+            # Without tRPC's own .query( call, which would otherwise read as a database query.
+            handler = body[:kind.start()] + body[kind.end() - 1:]
+            routes.append(_assess(route, handler, code, authed=authed, validated=".input(" in body))
             if TRPC_LIMITED.search(base):
                 routes[-1].rate_limit = "yes"
     return routes

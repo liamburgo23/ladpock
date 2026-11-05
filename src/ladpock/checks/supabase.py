@@ -16,6 +16,9 @@ ENABLE_RLS = re.compile(
 POLICY = re.compile(r"(?is)create\s+policy\s+.+?\s+on\s+((?:\"?\w+\"?\.)?\"?\w+\"?)(.*)")
 POLICY_TRUE = re.compile(r"(?is)\busing\s*\(\s*true\s*\)|\bwith\s+check\s*\(\s*true\s*\)")
 POLICY_CMD = re.compile(r"(?is)\bfor\s+(all|select|insert|update|delete)\b")
+PUBLIC_TABLE = re.compile(r"(?i)post|blog|article|product|catalog|categor|tag|faq|news|event|plan|pricing|feature|price|public|country|countries|currenc|language")
+PRIVATE_TABLE = re.compile(r"(?i)user|account|customer|member|profile|order|invoice|payment|billing|subscription|message|chat|conversation|note|document|"
+                           r"upload|secret|token|credential|address|patient|medical|salary|employee|transaction|booking|ticket|contact|lead")
 ANY_SIGNED_IN = re.compile(r"(?is)auth\.role\(\)\s*=\s*'authenticated'|auth\.uid\(\)\s+is\s+not\s+null|\bto\s+authenticated\b[^;]*\b(?:using|with\s+check)\s*\(\s*true\s*\)")
 OWNER_RULE = re.compile(r"(?is)auth\.uid\(\)\s*=|=\s*\(?\s*(?:select\s+)?auth\.uid\(\)|\bowner\b")
 FUNCTION_START = re.compile(r"(?is)create\s+(?:or\s+replace\s+)?function\s+((?:\"?\w+\"?\.)?\"?\w+\"?)")
@@ -78,8 +81,13 @@ def permissive_policies(ctx: ScanContext, info: CheckInfo) -> Iterator[Finding]:
             table = _table(match.group(1))[1]
             lineno = text.count("\n", 0, start + match.start()) + 1
             if command == "select":
-                yield ctx.finding(info, rel, lineno, f"policy on {table} for select using (true)", severity=Severity.LOW,
-                                  message=f"Anyone can read every row of '{table}'. Fine for public content, wrong for user data.")
+                if PUBLIC_TABLE.search(table):
+                    continue  # reading posts or products is usually the point
+                private = bool(PRIVATE_TABLE.search(table))
+                yield ctx.finding(info, rel, lineno, f"policy on {table} for select using (true)",
+                                  severity=Severity.HIGH if private else Severity.LOW,
+                                  message=f"Anyone can read every row of '{table}', and the name suggests private data. {info.fix}" if private
+                                  else f"Anyone can read every row of '{table}'. Fine for public content, wrong for user data.")
             else:
                 yield ctx.finding(info, rel, lineno, f"policy on {table} for {command} using (true)", confidence="high",
                                   message=f"Anyone can {command} rows in '{table}'. {info.why}")
