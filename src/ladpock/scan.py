@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
-from . import advisories, config, inventory, probe, scoring
+from . import advisories, config, github, inventory, probe, scoring
 from .checks import REGISTRY, ScanContext, inline_ignored, run_all
 from .db import DB
 from .feeds import epss, kev, registry
@@ -182,14 +182,23 @@ def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bo
         raise FileNotFoundError(f"{root} is not a folder")
     settings = PROFILES[profile]
     started = iso()
-    project_id = db.upsert_project(root)
+    from_github = github.managed_name(root)
+    project_id = db.upsert_project(root, name=from_github)
+    pending_errors: list[str] = []
+    if from_github and not offline:
+        # LadPock's own copy of a GitHub repository: scan what's there now, not what was there last time.
+        try:
+            github.fetch(from_github, log)
+        except github.GitHubError as exc:
+            pending_errors.append(f"Couldn't update {from_github} from GitHub, so this scan used the copy from last time: {exc}")
+            log(f"warning: {pending_errors[-1]}")
 
     step(SCAN_STEPS[0])
     log(f"Indexing {root} ...")
     index = FileIndex(root)
     stack = detect(index)
     ctx = ScanContext(root=root, index=index, stack=set(stack), git_files=tracked_files(root))
-    errors: list[str] = []
+    errors: list[str] = list(pending_errors)
     if index.truncated:
         errors.append("Stopped indexing at 50,000 files; some files weren't checked.")
 

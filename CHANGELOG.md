@@ -3,6 +3,17 @@
 All notable changes to LadPock. Versions follow [semantic versioning](https://semver.org/); while LadPock is below
 1.0, minor versions can include changes to checks and grades.
 
+## [0.18.0] - 2026-11-10
+
+### Added
+- Scan your repositories on GitHub. On Add project, paste a link to your GitHub account to choose from all your repositories, or a link to one. LadPock keeps
+  its own shallow copy of each, updates it before every scan, and never runs anything from it. Private repositories work through the GitHub CLI
+  (`gh auth login`); LadPock never handles the token. Also `ladpock github <link>` on the command line.
+- `ladpock projects remove owner/repo` removes a GitHub project by name and deletes LadPock's copy.
+
+### Changed
+- Dates more than two months old now read in months or years.
+
 ## [0.17.0] - 2026-11-05
 
 ### Added

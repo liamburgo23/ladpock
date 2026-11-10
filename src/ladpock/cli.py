@@ -8,7 +8,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import __version__, advisories, report, tauri
+from . import __version__, advisories, github, report, tauri
 from .checks import REGISTRY
 from .db import DB
 from .feeds import kev
@@ -202,6 +202,49 @@ def cmd_suppress(args, db: DB) -> int:
     return 0
 
 
+def cmd_github(args, db: DB) -> int:
+    """Add repositories from GitHub by link, and scan them."""
+    try:
+        owner, repo = github.parse_link(args.link)
+        repos, via = github.list_repos(owner, repo)
+    except github.GitHubError as exc:
+        print(str(exc), file=sys.stderr)
+        return 2
+    if via == "api":
+        print("Only public repositories are visible. For private ones, install the GitHub CLI (gh) and run 'gh auth login'.", file=sys.stderr)
+    if not repo:
+        skipped = [r for r in repos if r.archived or r.empty or (r.fork and not args.include_forks)]
+        repos = [r for r in repos if r not in skipped]
+        if skipped:
+            print(f"Skipping {len(skipped)} archived, empty or forked repositories" + ("" if args.include_forks else " (--include-forks adds forks)"),
+                  file=sys.stderr)
+    if args.list:
+        for r in repos:
+            print(f"{r.full_name.ljust(40)} {'private' if r.private else 'public '}  {(r.language or '-').ljust(12)} {r.pushed_at[:10]}")
+        return 0
+    if not repos:
+        print("Nothing to add.", file=sys.stderr)
+        return 0
+    failed = 0
+    for i, r in enumerate(repos, 1):
+        print(f"[{i}/{len(repos)}] {r.full_name}", file=sys.stderr)
+        try:
+            folder = github.fetch(r.full_name, lambda line: print(f"  {line}", file=sys.stderr))
+        except github.GitHubError as exc:
+            print(f"  {exc}", file=sys.stderr)
+            failed += 1
+            continue
+        db.upsert_project(folder, name=r.full_name)
+        if args.no_scan:
+            print(f"Added {r.full_name}")
+            continue
+        result = run_scan(folder, db, profile=args.profile, offline=args.offline, log=lambda line: print(f"  {line}", file=sys.stderr))
+        print(f"{r.full_name}: grade {result.scorecard.grade} ({result.scorecard.overall}/100), {len(result.findings)} findings")
+    if failed:
+        print(f"{failed} of {len(repos)} couldn't be copied (see above).", file=sys.stderr)
+    return 1 if failed == len(repos) else 0
+
+
 def cmd_projects(args, db: DB) -> int:
     if args.action == "list":
         rows = db.list_projects()
@@ -211,6 +254,10 @@ def cmd_projects(args, db: DB) -> int:
             print(f"{(p['last_grade'] or '-').ljust(3)} {p['name'].ljust(28)} {p['path']}")
         return 0
     path = Path(args.path or ".").resolve()
+    if args.action == "remove" and args.path and not path.is_dir():
+        # A GitHub project can be named the way the list shows it: owner/repo.
+        named = next((p for p in db.list_projects() if p["name"] == args.path), None)
+        path = Path(named["path"]) if named else path
     if args.action == "add":
         if not path.is_dir():
             print(f"{path} is not a folder", file=sys.stderr)
@@ -218,7 +265,12 @@ def cmd_projects(args, db: DB) -> int:
         db.upsert_project(path)
         print(f"Added {path}")
     elif args.action == "remove":
-        print(f"Removed {path}" if db.remove_project(path) else f"{path} wasn't registered")
+        if not db.remove_project(path):
+            print(f"{path} wasn't registered")
+        elif github.managed_name(path) and github.remove_copy(path):
+            print(f"Removed {github.managed_name(path) or path} and LadPock's copy of it")
+        else:
+            print(f"Removed {path}")
     elif args.action == "discover":
         markers = ("package.json", "pyproject.toml", "requirements.txt", "go.mod", "Cargo.lock", ".git")
         found = [p for p in sorted(path.iterdir()) if p.is_dir() and not p.is_symlink() and any((p / m).exists() for m in markers)]
@@ -452,6 +504,13 @@ def build_parser() -> argparse.ArgumentParser:
     sup.add_argument("--days", type=int, default=90, help="expire after this many days (0 = never; default 90)")
     sup.add_argument("--path", default=".")
 
+    gh = sub.add_parser("github", help="add (and scan) repositories from GitHub by link: your profile for all of them, or one repository")
+    gh.add_argument("link", help="e.g. https://github.com/you, https://github.com/you/your-app or you/your-app")
+    gh.add_argument("--list", action="store_true", help="only list what's there")
+    gh.add_argument("--no-scan", action="store_true", help="add them without scanning")
+    gh.add_argument("--include-forks", action="store_true", help="with a profile link, also add forks")
+    gh.add_argument("--profile", choices=sorted(PROFILES), default="standard", help="how much to check (default standard)")
+
     projects = sub.add_parser("projects", help="manage the projects LadPock watches")
     projects.add_argument("action", choices=["list", "add", "remove", "discover"])
     projects.add_argument("path", nargs="?")
@@ -492,7 +551,7 @@ def build_parser() -> argparse.ArgumentParser:
 COMMANDS = {
     None: cmd_status, "status": cmd_status, "scan": cmd_scan, "full-check": cmd_full_check, "routes": cmd_routes, "sbom": cmd_sbom,
     "fix-prompt": cmd_fix_prompt,
-    "advisories": cmd_advisories, "suppress": cmd_suppress, "projects": cmd_projects, "checks": cmd_checks,
+    "advisories": cmd_advisories, "suppress": cmd_suppress, "projects": cmd_projects, "github": cmd_github, "checks": cmd_checks,
     "doctor": cmd_doctor, "ui": cmd_ui, "scanners": cmd_scanners, "ai": lambda args, db: _ai_run(args, db),
     "shortcut": cmd_shortcut, "mcp": lambda args, db: _mcp(), "precommit": lambda args, db: _precommit(), "hook": lambda args, db: _hook(args),
 }

@@ -50,7 +50,10 @@ function ago(iso) {
   if (minutes < 90) return `${Math.round(minutes)} min ago`;
   const hours = minutes / 60;
   if (hours < 36) return `${Math.round(hours)} h ago`;
-  return `${Math.round(hours / 24)} days ago`;
+  const days = hours / 24;
+  if (days < 60) return `${Math.round(days)} days ago`;
+  if (days < 548) return `${Math.round(days / 30.4)} months ago`;
+  return `${Math.round(days / 365.25)} years ago`;
 }
 
 function plural(n, word, many) { return `${n} ${n === 1 ? word : (many || word + "s")}`; }
@@ -202,8 +205,10 @@ function helpLink(section, text) {
 
 // ---------- background tasks: what's running, what finished ----------
 
-const jobs = { list: [], seen: new Map(), timer: null, started: false, open: false };
-const STOPPABLE = new Set(["ai", "full", "full-all"]);
+const jobs = { list: [], seen: new Map(), timer: null, started: false, open: false, adding: "" };
+const STOPPABLE = new Set(["ai", "full", "full-all", "github"]);
+// Tasks that work through several projects, naming each step "project: step".
+const MANY = new Set(["full-all", "github"]);
 
 async function pollJobs() {
   clearTimeout(jobs.timer);
@@ -222,7 +227,12 @@ async function pollJobs() {
   document.title = running.length ? "● Running · LadPock" : "LadPock";
   drawActivity();
   drawJobBanner();
-  if (currentRoute().name === "home") drawHomeBadges();
+  if (currentRoute().name === "home") {
+    // Repositories being added from GitHub appear on the home page one by one, as each copy lands.
+    const adding = running.filter((j) => j.kind === "github").map((j) => `${j.id}:${j.step}`).join(",");
+    if (adding !== jobs.adding && !first) { jobs.adding = adding; renderHome(state.view); }
+    else { jobs.adding = adding; drawHomeBadges(); }
+  }
   jobs.timer = setTimeout(pollJobs, running.length ? 1000 : 6000);
 }
 
@@ -269,6 +279,11 @@ function finishMessage(j) {
     return `${j.title} finished${grades ? `: ${grades}` : ""}`;
   }
   if (j.kind === "benchmark") return `${j.title} finished`;
+  if (j.kind === "github") {
+    const added = (r.added || []).length, failed = r.failed || [];
+    return `${j.title}: ${plural(added, "repository", "repositories")} added` +
+      (failed.length ? `, ${failed.length} couldn't be copied (${failed.map((f) => f.repo).join(", ")}). The task log says why.` : "");
+  }
   const bits = [];
   if (r.grade) bits.push(`grade ${r.grade}`);
   if (r.findings != null) bits.push(plural(r.findings, "finding"));
@@ -287,7 +302,7 @@ function finishMessage(j) {
 function jobFinished(j) {
   toast(finishMessage(j));
   const r = currentRoute();
-  if (r.name === "project" && (j.project_id === r.id || j.kind === "full-all")) renderProject(r.id, r.tab, state.view, r.sub);
+  if (r.name === "project" && (j.project_id === r.id || MANY.has(j.kind))) renderProject(r.id, r.tab, state.view, r.sub);
   else if (r.name === "scanners" && j.kind === "install") renderScanners(state.view);
   else if (r.name === "home") renderHome(state.view);
 }
@@ -340,7 +355,7 @@ function drawJobBanner() {
   const r = currentRoute();
   if (!el || (r.name !== "project" && r.name !== "scanners")) return;
   const mine = r.name === "scanners" ? jobs.list.filter((j) => j.kind === "install")
-    : jobs.list.filter((j) => j.project_id === r.id || j.kind === "full-all");
+    : jobs.list.filter((j) => j.project_id === r.id || MANY.has(j.kind));
   const running = mine.find((j) => j.status === "running");
   setRunButtonsBusy(Boolean(running));
   if (running) {
@@ -402,8 +417,8 @@ function drawHome() {
   if (!projects.length) {
     body = h("div", { class: "card empty" },
       h("h2", null, "Add your first project"),
-      h("p", { class: "muted" }, "Pick a folder on this computer. LadPock reads it, never runs it, and nothing leaves your machine except package names for vulnerability lookups."),
-      h("a", { class: "btn primary", href: "#/add" }, "Choose a folder"));
+      h("p", { class: "muted" }, "Pick a folder on this computer, or paste a link to your GitHub account or a repository. LadPock reads the code, never runs it, and nothing leaves your machine except package names for vulnerability lookups."),
+      h("a", { class: "btn primary", href: "#/add" }, "Add a folder or GitHub repos"));
   } else {
     body = h("div", { class: "card flush list" }, projects.map(projectRow));
   }
@@ -418,9 +433,9 @@ function drawHomeBadges() {
   document.querySelectorAll(".job-slot").forEach((slot) => {
     const id = Number(slot.dataset.project);
     const job = running.find((j) => j.project_id === id);
-    const all = running.find((j) => j.kind === "full-all");
+    const all = running.find((j) => MANY.has(j.kind) && (j.steps[j.step] || "").startsWith(`${slot.dataset.name}:`));
     if (job) slot.replaceChildren(h("span", { class: "chip accent" }, h("span", { class: "spinner small" }), ` ${job.title.split(" of ")[0]} · ${jobProgress(job).pct}%`));
-    else if (all && (all.steps[all.step] || "").startsWith(`${slot.dataset.name}:`)) slot.replaceChildren(h("span", { class: "chip accent" }, h("span", { class: "spinner small" }), " Checking now"));
+    else if (all) slot.replaceChildren(h("span", { class: "chip accent" }, h("span", { class: "spinner small" }), " Checking now"));
     else slot.replaceChildren();
   });
 }
@@ -448,8 +463,8 @@ function projectRow(p) {
   return h("a", { class: "project-row", href: `#/project/${p.id}` },
     gradeEl(p.grade),
     h("div", { class: "grow" },
-      h("div", { class: "name" }, p.name),
-      h("div", { class: "faint mono" }, p.path),
+      h("div", { class: "name" }, p.name, p.github ? h("span", { class: "chip", style: "margin-left:8px" }, "GitHub") : null),
+      h("div", { class: "faint mono" }, p.github ? `github.com/${p.github}` : p.path),
       p.stack.length ? h("div", { class: "row", style: "margin-top:4px" }, p.stack.slice(0, 6).map((s) => h("span", { class: "chip" }, s))) : null),
     h("div", { class: "faint", style: "text-align:right" },
       h("div", { class: "job-slot", "data-project": p.id, "data-name": p.name }),
@@ -509,6 +524,8 @@ async function renderAdd(path, view) {
   $("#app").replaceChildren(h("div", { class: "stack" },
     h("a", { href: "#/" }, "← Your projects"),
     h("h1", null, "Add a project"),
+    githubCard(),
+    h("h2", null, "From a folder on this computer"),
     h("p", { class: "muted" }, "Choose the folder that contains your project's package.json, pyproject.toml or similar. LadPock only reads files."),
     h("div", { class: "card stack" },
       h("div", { class: "row" }, pathInput, h("button", { class: "btn", onclick: go }, "Go")),
@@ -519,6 +536,81 @@ async function renderAdd(path, view) {
         data.path && data.projects_inside ? h("button", { class: `btn small${data.project ? "" : " primary"}`, onclick: discover },
           `Add every project inside (${data.projects_inside})`) : null)),
     h("div", { class: "card flush list" }, rows.length ? rows : h("p", { class: "faint", style: "padding:16px 20px" }, "No sub-folders here."))));
+}
+
+function githubCard() {
+  const link = h("input", { type: "text", class: "field grow", placeholder: "https://github.com/you  or  https://github.com/you/your-app",
+    "aria-label": "GitHub link", value: load("ladpock-github-link") || "" });
+  const note = h("p", { class: "faint" });
+  const list = h("div");
+  const mine = h("span");
+  const show = async (value) => {
+    const text = (value || link.value).trim();
+    if (!text) { link.focus(); return; }
+    link.value = text;
+    store("ladpock-github-link", text);
+    list.replaceChildren(spinner("Asking GitHub"));
+    try {
+      const res = await api("POST", "/api/github/repos", { link: text });
+      list.replaceChildren(githubChooser(res));
+    } catch (e) {
+      list.replaceChildren(h("p", { style: "color:var(--high)" }, e.message));
+    }
+  };
+  link.addEventListener("keydown", (e) => { if (e.key === "Enter") show(); });
+  api("GET", "/api/github").then((t) => {
+    if (!t.git) note.textContent = "Git isn't installed on this computer, so LadPock can't copy repositories. Install it from git-scm.com, then come back.";
+    else if (t.gh_login) {
+      note.textContent = `Signed in to the GitHub CLI as ${t.gh_login}, so your private repositories work too.`;
+      mine.replaceChildren(h("button", { class: "btn small", onclick: () => show(`https://github.com/${t.gh_login}`) }, `Show all of ${t.gh_login}'s repos`));
+    } else note.textContent = t.gh
+      ? "Public repositories work now. For private ones, run 'gh auth login' in a terminal, then reload this page."
+      : "Public repositories work now. For private ones, install the GitHub CLI (cli.github.com) and run 'gh auth login'.";
+  }).catch(() => {});
+  return h("section", { class: "card stack" },
+    h("h2", null, "From GitHub"),
+    h("p", { class: "muted" }, "Paste a link to your GitHub account to choose from all your repositories, or a link to one. LadPock keeps its own copy of each, refreshes it before every scan, and never runs the code."),
+    h("div", { class: "row" }, link, h("button", { class: "btn primary", onclick: () => show() }, "Show repos"), mine),
+    note, list);
+}
+
+function githubChooser(res) {
+  if (!res.repos.length) return h("p", { class: "faint" }, "No repositories there.");
+  // Archived, empty and forked repositories are usually not what you're working on, so they start unticked.
+  const usual = (r) => !r.archived && !r.empty && !r.fork && !r.added;
+  const boxes = res.repos.map((r) => h("input", { type: "checkbox", checked: (res.single ? !r.added : usual(r)) || null, disabled: r.added || null,
+    "aria-label": r.full_name }));
+  const scan = h("input", { type: "checkbox", checked: true, id: "gh-scan" });
+  const addButton = h("button", { class: "btn primary" });
+  const count = () => {
+    const n = boxes.filter((b) => b.checked && !b.disabled).length;
+    addButton.textContent = n ? `Add ${plural(n, "repository", "repositories")}` : "Choose some repositories";
+    addButton.disabled = !n;
+  };
+  boxes.forEach((b) => b.addEventListener("change", count));
+  addButton.addEventListener("click", async () => {
+    const chosen = res.repos.filter((_, i) => boxes[i].checked && !boxes[i].disabled).map((r) => r.full_name);
+    if (await startTask("/api/github/add", { repos: chosen, scan: scan.checked })) {
+      toast(scan.checked ? "Copying and scanning. Follow it in the top bar." : "Copying. They'll appear in Your projects.");
+      location.hash = "#/";
+    }
+  });
+  count();
+  const mb = (kb) => (kb >= 1024 ? `${(kb / 1024).toFixed(kb >= 10240 ? 0 : 1)} MB` : `${kb} KB`);
+  return h("div", { class: "stack" },
+    res.via === "api" ? h("p", { class: "faint" }, "Showing public repositories only. Sign in to the GitHub CLI to see private ones.") : null,
+    h("div", { class: "card flush list" }, res.repos.map((r, i) => h("label", { class: "check-item" }, boxes[i],
+      h("span", { class: "grow" },
+        h("strong", null, r.full_name.split("/")[1]), " ",
+        r.private ? h("span", { class: "chip" }, "private") : null,
+        r.fork ? h("span", { class: "chip" }, "fork") : null,
+        r.archived ? h("span", { class: "chip" }, "archived") : null,
+        r.empty ? h("span", { class: "chip" }, "empty") : null,
+        r.added ? h("span", { class: "chip accent" }, "already added") : null,
+        h("div", { class: "faint small-print" }, [r.language, r.pushed_at ? `updated ${ago(r.pushed_at)}` : null, r.size_kb ? mb(r.size_kb) : null, r.description]
+          .filter(Boolean).join(" · ")))))),
+    h("label", { class: "row", for: "gh-scan" }, scan, h("span", null, "Scan them straight after adding (a standard scan, one after another)")),
+    h("div", { class: "row" }, addButton));
 }
 
 // ---------- project ----------
@@ -536,7 +628,10 @@ async function renderProject(id, tab, view, sub) {
     h("div", { class: "stack" },
       h("a", { href: "#/" }, "← Your projects"),
       h("h1", null, p.name),
-      h("div", { class: "faint mono" }, p.path),
+      p.github
+        ? h("div", { class: "faint" }, "LadPock's copy of ", h("a", { href: `https://github.com/${p.github}`, target: "_blank", rel: "noopener noreferrer" }, `github.com/${p.github}`),
+          ", updated from GitHub before every scan.")
+        : h("div", { class: "faint mono" }, p.path),
       p.stack.length ? h("div", { class: "row" }, p.stack.map((s) => h("span", { class: "chip" }, s))) : null,
       scan ? h("p", { class: "faint" },
         `Deep checks: ${coverage.deep.join(", ") || "none"}`,
@@ -578,7 +673,9 @@ async function renderProject(id, tab, view, sub) {
   }
   parts.push(h("div", { class: "row", style: "justify-content:flex-end" },
     h("button", { class: "btn small danger", onclick: async () => {
-      if (!confirm(`Remove ${p.name} from LadPock? Your files aren't touched; only LadPock's scan history is deleted.`)) return;
+      if (!confirm(p.github
+        ? `Remove ${p.name} from LadPock? LadPock's copy and its scan history are deleted. The repository on GitHub isn't touched.`
+        : `Remove ${p.name} from LadPock? Your files aren't touched; only LadPock's scan history is deleted.`)) return;
       await api("DELETE", `/api/projects/${id}`);
       toast("Removed");
       location.hash = "#/";
@@ -1591,6 +1688,16 @@ const HELP = [
     "Leads never change your grade and can't hide a scanner finding. Confirm the real ones, which puts them in the fix prompt, and dismiss the rest. Dismissed leads stay dismissed. Even after filtering, expect some leads to be wrong, because the model can't see everything.",
     "The first review reads everything. Later reviews only re-read code that changed. Stopping is safe at any time; the next run continues from where it stopped.",
     "The nightly review is a Windows scheduled task for your account. It runs only when plugged in, at low priority, and stops at the time you choose.",
+  ]],
+  ["github", "Projects from GitHub", [
+    "On Add project, paste a link to your GitHub account (github.com/you) to choose from all your repositories, or a link to one repository. LadPock then:",
+    ["keeps its own copy of each repository in its data folder, separate from your own folders, so nothing you're working on is ever touched",
+      "copies only the latest commit, which is quick and small",
+      "updates the copy from GitHub before every scan, so you always see what's on GitHub now (if GitHub can't be reached, it scans the copy from last time and says so)",
+      "never runs anything from the repository: git hooks, submodules and links are all switched off"],
+    "Private repositories work if you're signed in to the GitHub CLI (install it from cli.github.com, then run 'gh auth login' in a terminal). Git asks the GitHub CLI for access as it needs it; LadPock never sees or stores your token. Without it, public repositories still work.",
+    "Removing a GitHub project deletes LadPock's copy and its scan history. The repository on GitHub isn't touched.",
+    "Searching git history for deleted secrets needs the full history, so for that, add a folder where you've cloned the repository yourself.",
   ]],
   ["data", "Vulnerability data", [
     "Every time you open LadPock or run a scan, it refreshes three sources:",

@@ -210,15 +210,15 @@ class DB:
         self.conn.commit()
 
     # projects
-    def upsert_project(self, path: Path) -> int:
-        resolved = path.resolve()
+    def upsert_project(self, path: Path, name: str | None = None) -> int:
+        resolved = Path(path).resolve()
         key = path_key(resolved)
         row = self.conn.execute("SELECT id FROM projects WHERE path_key = ?", (key,)).fetchone()
         if row:
             return row["id"]
         cur = self.conn.execute(
             "INSERT INTO projects (path, path_key, name, added_at) VALUES (?, ?, ?, ?)",
-            (str(resolved), key, resolved.name, iso()),
+            (str(resolved), key, name or resolved.name, iso()),
         )
         self.conn.commit()
         return int(cur.lastrowid)

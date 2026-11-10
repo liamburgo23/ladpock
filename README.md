@@ -127,8 +127,8 @@ too, and `ladpock shortcut remove` takes them away.
 ladpock ui
 ```
 
-This opens LadPock in your browser. Add projects by picking their folders. Each project has one scan panel: pick a
-preset or set each option yourself, then press **Scan** at the bottom.
+This opens LadPock in your browser. Add projects by picking their folders, or by pasting a GitHub link (see below).
+Each project has one scan panel: pick a preset or set each option yourself, then press **Scan** at the bottom.
 
 | Option | Cost | Where it runs |
 | --- | --- | --- |
@@ -164,6 +164,31 @@ new that affects your projects.
 
 The dashboard only listens on `127.0.0.1`, and every request needs a private key that's in the link printed in your
 terminal. It changes each time you start it. See [SECURITY.md](SECURITY.md) for the details.
+
+### Your repositories on GitHub
+
+On **Add project**, paste a link to your GitHub account (`https://github.com/you`) and LadPock lists all your
+repositories. Tick the ones you want and press **Add**: each is copied and scanned, and appears on the home page
+with a GitHub label. A link to one repository (`https://github.com/you/your-app`) adds just that one.
+
+- LadPock keeps its own copy of each repository in its data folder, apart from your own folders. It copies only the
+  latest commit, and updates the copy from GitHub before every scan.
+- Nothing from the repository runs. Git hooks, submodules and symbolic links are switched off.
+- **Private repositories** work if you're signed in to the [GitHub CLI](https://cli.github.com) (`gh auth login`).
+  Git asks the GitHub CLI for access as it needs it; LadPock never sees or stores your token. Without it, public
+  repositories still work.
+- Removing a GitHub project deletes LadPock's copy. The repository on GitHub isn't touched.
+- Searching git history for deleted secrets needs the full history, so for that, scan a folder where you've cloned
+  the repository yourself.
+
+From the command line:
+
+```bash
+ladpock github https://github.com/you
+```
+
+Archived, empty and forked repositories are skipped unless you pick them (`--include-forks` adds forks). Use
+`--list` to see what's there first, or `--no-scan` to add without scanning.
 
 ### Local AI review (free, private, overnight)
 
@@ -267,7 +292,9 @@ you've scanned before.
 | `ladpock sbom [path]` | List every package version as a CycloneDX bill of materials |
 | `ladpock fix-prompt [path]` | Print a prompt for your AI assistant from the last scan |
 | `ladpock advisories [path]` | List known vulnerable dependencies |
+| `ladpock github <link>` | Add and scan your GitHub repositories: your profile for all of them, or one (`--list`, `--no-scan`, `--include-forks`) |
 | `ladpock projects discover <folder>` | Register every project inside a folder |
+| `ladpock projects remove <path or owner/repo>` | Stop watching a project (a GitHub project's copy is deleted too) |
 | `ladpock suppress <ref> --reason "..."` | Accept a finding for 90 days (`--days 0` = forever) |
 | `ladpock ai status\|benchmark\|review\|leads\|nightly\|schedule` | Local AI review (see above) |
 | `ladpock scanners [install\|remove] [name]` | List, install or remove the optional scanners (pinned, checksum-verified) |
@@ -362,7 +389,7 @@ won't replace an existing hook unless you pass `--force`; `ladpock hook remove` 
 ### In CI
 
 ```yaml
-- uses: liamburgo23/ladpock@v0.17.0
+- uses: liamburgo23/ladpock@v0.18.0
   with:
     fail-on: high   # critical, high, medium or low; leave empty to never fail
 ```
@@ -384,7 +411,7 @@ ladpock scan . --write-baseline .ladpock-baseline.json
 ```
 
 ```yaml
-- uses: liamburgo23/ladpock@v0.17.0
+- uses: liamburgo23/ladpock@v0.18.0
   with:
     baseline: .ladpock-baseline.json
 ```
@@ -473,6 +500,8 @@ isn't 127.0.0.1 or localhost). What leaves your machine:
   data" to send nothing)
 - CVE IDs, sent to FIRST's EPSS API
 - a download of CISA's public catalog
+- only if you add projects from GitHub: requests to GitHub to list and copy those repositories (through git and, if
+  you have it, the GitHub CLI)
 - only if you set up the paid online AI review and switch it on for a scan: parts of your code with secrets masked,
   sent to Anthropic
 

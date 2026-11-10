@@ -92,6 +92,16 @@ follows; a change that breaks one is a security bug.
    are masked like every other report. `ladpock hook install` writes one pre-commit hook. It refuses to overwrite
    an existing hook unless told to, keeps a backup, and restores it on removal.
 
+15. **Copies of GitHub repositories can't run anything or reach outside LadPock's folder.** LadPock clones only
+   `https://github.com/<owner>/<repo>.git`, with owner and repository names checked against GitHub's own rules, into
+   its own data folder (`github/<owner>/<repo>`), and only the latest commit. Every git call points hooks at nothing,
+   checks symbolic links out as plain files, refuses the `file` and `ext` transports, never recurses into submodules,
+   skips Git LFS downloads, and can't prompt for a login. Updating a copy resets it to what's on GitHub and removes
+   anything else in its folder. Deleting a copy refuses any folder outside `github/`.
+
+   Private repositories use the GitHub CLI as git's credential helper for github.com only, for that one command.
+   LadPock never reads, stores or logs a token, and doesn't change your git or GitHub CLI settings.
+
 ## Limits
 
 LadPock finds common, recognisable mistakes. It can't prove an application is secure, and it can't see business

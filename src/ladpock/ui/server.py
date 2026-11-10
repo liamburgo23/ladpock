@@ -22,6 +22,7 @@ import re
 import secrets
 import string
 import threading
+import time
 import uuid
 import webbrowser
 from dataclasses import dataclass, field
@@ -29,7 +30,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, urlsplit
 
-from .. import __version__, advisories, probe, report, report_html, scoring, tauri
+from .. import __version__, advisories, github, probe, report, report_html, scoring, tauri
 from ..ai import keys as ai_keys
 from ..ai import online as ai_online
 from ..ai import review as ai_review
@@ -73,6 +74,7 @@ class ApiError(Exception):
 
 
 AI_KINDS = {"ai", "full", "full-all", "benchmark"}  # these use the GPU, so only one runs at a time
+MANY_KINDS = {"full-all", "github"}  # these work through several projects, so nothing else runs beside them
 
 
 @dataclass
@@ -140,10 +142,10 @@ class App:
         with self.jobs_lock:
             running = [j for j in self.jobs.values() if j.status == "running"]
             for job in running:
-                if job.kind == kind and job.project_id == project_id:
+                if job.kind == kind and job.project_id == project_id and kind not in MANY_KINDS:
                     return job  # pressing the button twice just shows the same job
             for job in running:
-                if (project_id is not None and job.project_id == project_id) or "full-all" in (kind, job.kind):
+                if (project_id is not None and job.project_id == project_id) or kind in MANY_KINDS or job.kind in MANY_KINDS:
                     raise ApiError(409, f"Wait for \"{job.title}\" to finish first")
                 if kind in AI_KINDS and job.kind in AI_KINDS:
                     raise ApiError(409, f"The local model is busy with \"{job.title}\". Try again when it finishes")
@@ -320,6 +322,7 @@ def _project_summary(db: DB, row, vulnerable: dict[int, set]) -> dict:
     deep, generic = coverage(stack)
     return {
         "id": row["id"], "name": row["name"], "path": row["path"], "exists": Path(row["path"]).is_dir(),
+        "github": github.managed_name(row["path"]),
         "grade": row["last_grade"], "score": row["last_score"], "last_scan_at": row["last_scan_at"],
         "stack": deep + generic, "vulnerable_deps": len(vulnerable.get(row["id"], ())),
     }
@@ -666,9 +669,75 @@ def api_project(app, db, match, query, body):
 
 
 def api_remove_project(app, db, match, query, body):
-    if not db.remove_project_by_id(_project_id(match)):
+    row = db.get_project_by_id(_project_id(match))
+    if not row or not db.remove_project_by_id(row["id"]):
         raise ApiError(404, "Project not found")
+    if github.managed_name(row["path"]):
+        try:
+            github.remove_copy(row["path"])  # LadPock's own copy of a GitHub repository, not one of your folders
+        except OSError as exc:
+            return 200, {"ok": True, "warning": f"Removed, but part of LadPock's copy couldn't be deleted yet ({exc}). It's in {row['path']}."}
     return 200, {"ok": True}
+
+
+_github_tools: dict = {}
+
+
+def api_github(app, db, match, query, body):
+    """Whether git and the GitHub CLI are here, and who gh is signed in as. Asking gh takes a second, so it's remembered for a few minutes."""
+    now = time.monotonic()
+    if not _github_tools or now - _github_tools["at"] > 300 or query.get("fresh"):
+        _github_tools.update(github.tools(), at=now)
+    return 200, {k: v for k, v in _github_tools.items() if k != "at"}
+
+
+def api_github_repos(app, db, match, query, body):
+    try:
+        owner, repo = github.parse_link(str(body.get("link", "")))
+        repos, via = github.list_repos(owner, repo)
+    except github.GitHubError as exc:
+        raise ApiError(400, str(exc)) from exc
+    added = {github.managed_name(p["path"]) for p in db.list_projects()}
+    return 200, {"owner": owner, "single": repo is not None, "via": via,
+                 "repos": [{**r.to_dict(), "added": r.full_name in added} for r in repos]}
+
+
+def api_github_add(app, db, match, query, body):
+    names = body.get("repos")
+    if not isinstance(names, list) or not names or len(names) > 100:
+        raise ApiError(400, "Choose between 1 and 100 repositories")
+    try:
+        for name in names:
+            github.copy_path(str(name))
+    except github.GitHubError as exc:
+        raise ApiError(400, str(exc)) from exc
+    names = list(dict.fromkeys(str(n) for n in names))
+    scan = _bool(body, "scan", True)
+    options = run_options({})
+    steps = [f"{n}: {s}" for n in names for s in (["Copy from GitHub"] + (run_steps(options) if scan else []))]
+
+    def work(db: DB, job: Job) -> dict:
+        added, failed = [], []
+        for i, name in enumerate(names):
+            if job.stop.is_set():
+                break
+            job.log.append(f"== {name} ({i + 1} of {len(names)})")
+            job.enter(f"{name}: Copy from GitHub")
+            try:
+                folder = github.fetch(name, job.log.append)
+            except github.GitHubError as exc:
+                job.log.append(f"warning: {exc}")
+                failed.append({"repo": name, "error": str(exc)})
+                continue
+            project_id = db.upsert_project(folder, name=name)
+            added.append({"repo": name, "project_id": project_id})
+            if scan and not job.stop.is_set():
+                run_project(db, job, project_id, options, prefix=f"{name}: ")
+        return {"added": added, "failed": failed}
+
+    title = f"Add {names[0]} from GitHub" if len(names) == 1 else f"Add {len(names)} repositories from GitHub"
+    job = app.start_job("github", None, title, steps, work)
+    return 202, {"job": job.id}
 
 
 def _runnable(db: DB, match: re.Match[str]):
@@ -1058,6 +1127,9 @@ ROUTES: list[tuple[str, re.Pattern[str], Callable]] = [
     ("POST", re.compile(r"/api/projects/(\d+)/human"), api_human),
     ("GET", re.compile(r"/api/jobs/([0-9a-f]{32})"), api_job),
     ("GET", re.compile(r"/api/browse"), api_browse),
+    ("GET", re.compile(r"/api/github"), api_github),
+    ("POST", re.compile(r"/api/github/repos"), api_github_repos),
+    ("POST", re.compile(r"/api/github/add"), api_github_add),
     ("GET", re.compile(r"/api/checks"), api_checks),
     ("POST", re.compile(r"/api/jobs/([0-9a-f]{32})/stop"), api_job_stop),
     ("GET", re.compile(r"/api/jobs"), api_jobs),

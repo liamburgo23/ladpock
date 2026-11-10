@@ -370,6 +370,23 @@ worse than a `package.json` holding `{"dependencies": 5}`, and a hang in a regex
 **More kinds of software.** Notebooks are read up to 20 MB, because saved charts make them big and keys can sit in any cell or output. MCP tools are flagged because a model
 picks their arguments, and any text it reads can steer that, so a tool taking a whole command is remote code execution with extra steps.
 
+## Repositories from GitHub (0.18.0)
+
+- **LadPock owns the copy.** Repositories are cloned into `data_dir()/github/<owner>/<repo>`, never into a folder the
+  person chose, so `reset --hard` and `clean -fdx` before a scan can't destroy anyone's work. A project is a GitHub
+  project exactly when its path is two levels under that folder (`github.managed_name`); there's no extra column.
+- **Shallow and refreshed.** `--depth 1 --single-branch --no-tags` keeps copies small. `run_scan` fetches first,
+  unless offline; a failed fetch becomes a scan error and the old copy is scanned, so a flaky network never loses a
+  scan. Git-history secret scanning sees one commit, which the docs say.
+- **No code from the repository runs.** `SAFE_GIT` points hooks at the null device, turns off symlinks, fsmonitor,
+  submodule recursion and the `file`/`ext` transports. LFS smudging and prompts are off through the environment.
+- **Credentials stay with gh.** For private repositories, git is told (with `-c`, for that command only) to ask
+  `gh auth git-credential` for github.com. Listing uses `gh repo list/view --json`, which sees private repositories;
+  without gh, the public REST API through the normal feed client.
+- **Adding is one background task.** `/api/github/add` copies then scans each repository in turn, with steps named
+  `owner/repo: step` so the home page can badge each project and show it as soon as its copy lands. Like "Check all
+  projects", it doesn't run beside other tasks.
+
 ## Following request data (0.17.0)
 
 **The gap.** Measured before building: of 22 bugs written the way generated code usually writes them, split over two or three lines, the line-at-a-time checks caught 3.
