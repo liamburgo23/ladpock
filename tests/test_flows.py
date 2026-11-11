@@ -91,6 +91,9 @@ BUGS = [
 ]
 
 SAFE = [
+    # ---------- handed to a function we don't know, as data ----------
+    ("a.js", 'const layout = String(req.body.layout);\nres.send(ejs.render("<pre><%= layout %></pre>", { layout }));\n'),
+    ("a.js", 'const who = req.query.who;\nres.send(renderPage("<h1>Orders</h1>", escapeFor(who)));\n'),
     # ---------- SQL done properly ----------
     ("a.js", 'const { id } = req.params;\nconst sql = "SELECT * FROM users WHERE id = $1";\nawait db.query(sql, [id]);\n'),
     ("a.js", 'const name = req.body.name;\nawait db.query("INSERT INTO t (n) VALUES ($1)", [name]);\n'),

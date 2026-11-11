@@ -230,7 +230,9 @@ async function pollJobs() {
   if (currentRoute().name === "home") {
     // Repositories being added from GitHub appear on the home page one by one, as each copy lands.
     const adding = running.filter((j) => j.kind === "github").map((j) => `${j.id}:${j.step}`).join(",");
-    if (adding !== jobs.adding && !first) { jobs.adding = adding; renderHome(state.view); }
+    // So do the "Fixing in chat" counts, while a chat works through a project.
+    const chatting = state.status && state.status.projects.some((p) => p.fixing);
+    if ((adding !== jobs.adding || chatting) && !first) { jobs.adding = adding; renderHome(state.view); }
     else { jobs.adding = adding; drawHomeBadges(); }
   }
   jobs.timer = setTimeout(pollJobs, running.length ? 1000 : 6000);
@@ -468,6 +470,7 @@ function projectRow(p) {
       p.stack.length ? h("div", { class: "row", style: "margin-top:4px" }, p.stack.slice(0, 6).map((s) => h("span", { class: "chip" }, s))) : null),
     h("div", { class: "faint", style: "text-align:right" },
       h("div", { class: "job-slot", "data-project": p.id, "data-name": p.name }),
+      p.fixing ? h("div", null, h("span", { class: "chip accent" }, `Fixing in chat: ${p.fixing.done} of ${p.fixing.total}`)) : null,
       h("div", null, p.exists ? (p.last_scan_at ? `Scanned ${ago(p.last_scan_at)}` : "Not scanned yet") : "Folder missing"),
       p.vulnerable_deps ? h("div", { style: "color:var(--medium)" }, plural(p.vulnerable_deps, "vulnerable dependency", "vulnerable dependencies")) : null));
 }
@@ -641,12 +644,14 @@ async function renderProject(id, tab, view, sub) {
       h("div", null,
         h("div", { style: "font-size:20px;font-weight:700" }, `${scan.score}/100`),
         h("div", { class: "faint" }, `Last scanned ${ago(scan.finished_at)} (${scan.profile})`),
-        h("span", { class: "help-inline" }, scan.grade === "A+" ? "Why this grade?" : "Why not A+? How to improve →")))
+        h("span", { class: "help-inline" }, scan.grade === "A+" ? "Why this grade?" : "Why not A+? How to improve →"),
+        p.accepted_by_agent ? h("div", { style: "color:var(--medium);font-size:13px;margin-top:2px" },
+          `Includes ${plural(p.accepted_by_agent, "risk")} accepted by an AI assistant`) : null))
       : h("div", { class: "row", style: "align-items:center" }, gradeEl(null, true),
         h("div", null, h("div", { style: "font-size:20px;font-weight:700" }, "Not scanned"),
           h("div", { class: "faint" }, "Scan to get a grade"), helpLink("grades", "How grades work"))));
 
-  const parts = [header, h("div", { id: "job-banner" }), scanPanel(p, data), aiSettings(p, data.ai)];
+  const parts = [header, h("div", { id: "job-banner" }), chatBanner(p, data, id), scanPanel(p, data), aiSettings(p, data.ai)];
   if (!scan) {
     parts.push(h("div", { class: "card empty" }, h("h2", null, "No results yet"),
       h("p", { class: "muted" }, "Choose what to run above, then press Scan.")));
@@ -659,7 +664,9 @@ async function renderProject(id, tab, view, sub) {
     const leads = data.ai.leads.filter((l) => l.status !== "dismissed").length;
     const tabs = [["findings", `Findings (${data.findings.length}${leads ? ` + ${leads} AI` : ""})`],
       ["grade", scan.grade === "A+" ? "Why this grade" : "Why not A+"], ["routes", entryLabel],
-      ["deps", `Dependencies (${deps})`], ["human", `Needs a human (${humanDone}/${data.human.length})`], ["history", "History"]];
+      ["deps", `Dependencies (${deps})`], ["human", `Needs a human (${humanDone}/${data.human.length})`],
+      ["chat", (data.fixes.risks || []).length ? `Fix in chat · ${plural(data.fixes.risks.length, "known risk")}` : "Fix in chat"],
+      ["history", "History"]];
     parts.push(h("nav", { class: "tabs", "aria-label": "Project sections" }, tabs.map(([key, label]) =>
       h("a", { href: `#/project/${id}/${key}`, "aria-current": key === tab ? "page" : null }, label))));
     const content = h("div", { class: "stack" });
@@ -668,6 +675,7 @@ async function renderProject(id, tab, view, sub) {
     else if (tab === "deps") drawDeps(content, id, view);
     else if (tab === "human") drawHuman(content, id, data.human);
     else if (tab === "history") drawHistory(content, data.history);
+    else if (tab === "chat") drawChat(content, id, p, data, view);
     else if (tab === "grade") drawGrade(content, id, data, sub);
     else drawFindings(content, id, data, summary);
   }
@@ -1186,9 +1194,16 @@ function drawFindings(container, projectId, data, summary) {
   const scanners = (summary.scanners || []).map((s) => !s.available ? `${s.name} not installed` : s.ran ? `${s.name} ran` : `${s.name} failed`);
   const info = [`Built-in: ${summary.checks_run ?? "?"} checks`, ...scanners, `${summary.dependencies ?? 0} dependencies checked`];
   container.append(h("div", { class: "row spread" }, h("p", { class: "faint" }, info.join(" · ")), reportButton(projectId)));
-  if (summary.suppressed) {
+  const accepted = (summary.accepted || []).length;
+  const otherHidden = (summary.suppressed || 0) - accepted;
+  if (accepted) {
     container.append(h("p", { class: "faint", style: "color:var(--medium)" },
-      `${plural(summary.suppressed, "finding")} hidden by 'accept risk', ladpock-ignore comments or ladpock.toml. Check any you didn't add yourself.`));
+      `${plural(accepted, "finding")} accepted as known risks, not counted in the grade. `,
+      h("a", { href: `#/project/${projectId}/chat` }, "See who accepted them and why")));
+  }
+  if (otherHidden > 0) {
+    container.append(h("p", { class: "faint", style: "color:var(--medium)" },
+      `${plural(otherHidden, "finding")} hidden by ladpock-ignore comments or ladpock.toml. Check any you didn't add yourself.`));
   }
   if ((summary.errors || []).length) {
     container.append(h("details", { class: "faint" }, h("summary", null, plural(summary.errors.length, "warning")),
@@ -1300,7 +1315,7 @@ function findingEl(f, projectId, verdict, isNew) {
         try {
           await api("POST", `/api/projects/${projectId}/suppress`, { ref: f.ref, reason: reason.value.trim(), days: Number(days.value) });
           details.remove();
-          toast("Accepted. It'll be hidden from future scans.");
+          toast("Accepted. From the next scan it's listed under Known risks instead of findings.");
         } catch (e) { err.textContent = e.message; }
       } }, "Save"),
       h("button", { class: "btn small", onclick: () => actions.replaceChildren(fixBtn, acceptBtn) }, "Cancel"), err));
@@ -1545,6 +1560,145 @@ function drawHuman(container, id, items) {
     })));
 }
 
+// ---------- fixing from a chat ----------
+
+const ITEM_STATUS = {
+  queued: ["Queued", ""], working: ["Working on it", "accent"], fixed: ["Fixed, confirmed by a re-scan", "good"],
+  needs_you: ["Needs you", "warn"], accepted: ["Accepted as a known risk", "warn"],
+};
+
+function chatWords(p) {
+  return p.github
+    ? "Open a chat in your own clone of this repository and say: use LadPock to fix these one by one"
+    : "Use LadPock to fix these one by one";
+}
+
+function chatBanner(p, data, id) {
+  const fixes = data.fixes || {};
+  const run = fixes.run;
+  if (run && run.status === "active") {
+    const done = run.items.filter((i) => i.status !== "queued" && i.status !== "working").length;
+    const working = run.items.find((i) => i.status === "working");
+    return h("section", { class: "banner info" },
+      h("div", { class: "row spread" },
+        h("strong", null, `${run.agent || "Your AI assistant"} is fixing findings in a chat: ${done} of ${run.items.length} done`),
+        h("a", { class: "btn small", href: `#/project/${id}/chat` }, "See progress")),
+      working ? h("p", { class: "faint" }, `Now: ${working.title}${working.file ? ` in ${working.file}` : ""} · last activity ${ago(run.updated_at)}`) : null);
+  }
+  if (!data.scan || !data.findings.length) return null;
+  return h("p", { class: "faint" }, "Want your AI assistant to fix these? ",
+    h("a", { href: `#/project/${id}/chat` }, "Fix them one by one from your chat →"));
+}
+
+function drawChat(container, id, p, data, view) {
+  const fixes = data.fixes || {};
+  const words = chatWords(p);
+  const working = (fixes.linked || []).filter((l) => !l.github);
+  const githubProject = (fixes.linked || []).find((l) => l.github);
+
+  const how = h("section", { class: "card stack" },
+    h("h2", null, "Fix these from your AI chat"),
+    h("p", { class: "muted" }, "Your AI assistant does the fixing in the chat you already have open, one finding at a time. After each fix LadPock re-scans to confirm it really worked, then gives it the next one. LadPock never edits your code itself."),
+    p.github
+      ? h("div", { class: "stack" },
+        h("p", null, h("strong", null, "Fix in your own clone. "),
+          `This is LadPock's copy of github.com/${p.github}, which is reset from GitHub before every scan, so fixes made here would be lost.`),
+        working.length
+          ? h("p", null, "Your clone: ", working.map((w, i) => [i ? ", " : "", h("a", { href: `#/project/${w.id}/chat` }, w.path)]))
+          : h("p", { class: "faint" }, `Open a chat in the folder where you've cloned github.com/${p.github}. LadPock recognises it from its GitHub address.`))
+      : githubProject
+        ? h("p", { class: "faint" }, "This folder is your copy of ", h("a", { href: `#/project/${githubProject.id}` }, githubProject.name),
+          ". Fixes made here show up on GitHub once you push them.")
+        : null,
+    h("ol", { class: "steps" },
+      h("li", null, "Open a chat in this project's folder in Claude Code, Codex, Cursor, VS Code or any other app with LadPock connected (",
+        h("a", { href: "#/help/chat" }, "how to connect"), ")."),
+      h("li", null, "Say what you want, for example:",
+        h("div", { class: "row", style: "margin-top:6px" },
+          h("code", { class: "mono" }, words),
+          h("button", { class: "btn small", onclick: async () => { await copy(words); toast("Copied"); } }, "Copy")),
+        h("div", { class: "faint", style: "margin-top:6px" }, "In Claude Code you can also type ", h("code", null, "/ladpock fix"),
+          " (or ", h("code", null, "/ladpock"), " for a summary) after running ", h("code", null, "ladpock connect claude"), ".")),
+      h("li", null, "Follow along here. Your assistant stops and asks you when a fix doesn't hold, or would change how your app behaves.")),
+    h("label", { class: "row" },
+      h("input", { type: "checkbox", checked: fixes.commits || null, onchange: async (e) => {
+        try {
+          await api("POST", "/api/settings/fix-commits", { enabled: e.target.checked });
+          toast(e.target.checked ? "Each fix will be its own commit" : "Your assistant will leave committing to you");
+        } catch (err) { toast(err.message); e.target.checked = !e.target.checked; }
+      } }),
+      h("span", null, h("strong", null, "Commit each fix separately"), h("span", { class: "faint" },
+        " — so any single fix is easy to undo. The assistant never pushes. Applies to all projects."))));
+  container.append(how);
+
+  const run = fixes.run;
+  if (run) container.append(runCard(run));
+  container.append(risksCard(id, fixes.risks || []));
+
+  if (run && run.status === "active") followRun(id, view, JSON.stringify(run));
+}
+
+function followRun(id, view, seen) {
+  // Follow the chat's progress while this tab is open. Only redraw when something changed, so the page doesn't jump.
+  setTimeout(async () => {
+    const r = currentRoute();
+    if (view !== state.view || r.name !== "project" || r.id !== id || r.tab !== "chat") return;
+    let latest;
+    try { latest = await api("GET", `/api/projects/${id}/fixes`); } catch (e) { followRun(id, view, seen); return; }
+    if (JSON.stringify(latest.run) !== seen) renderProject(id, "chat", state.view);
+    else followRun(id, view, seen);
+  }, 4000);
+}
+
+function runCard(run) {
+  const done = run.items.filter((i) => i.status !== "queued" && i.status !== "working").length;
+  const phase = run.status === "active" ? "In progress" : run.status === "done" ? "Finished" : run.status === "stopped" ? "Stopped" : "Replaced by a newer run";
+  return h("section", { class: "card flush" },
+    h("div", { class: "row spread card-head" },
+      h("div", null, h("h2", null, `Fix run ${run.id}: ${phase}`),
+        h("div", { class: "faint" }, `${run.agent || "AI assistant"} · started ${ago(run.started_at)} · ${done} of ${run.items.length} done`
+          + ` · ${run.commits ? "a commit per fix" : "no commits"}`),
+        run.notes ? h("div", { class: "faint" }, `Your notes: ${run.notes}`) : null),
+      h("div", { class: "bar", style: "min-width:120px" }, h("span", { style: `width:${Math.round(100 * done / Math.max(1, run.items.length))}%` }))),
+    h("div", { class: "list" }, run.items.map((i) => {
+      const [label, tone] = ITEM_STATUS[i.status] || [i.status, ""];
+      return h("div", { class: "check-item" },
+        sevPill(i.severity || "info"),
+        h("div", { class: "grow" },
+          h("div", null, h("strong", null, i.title || i.check_id)),
+          h("div", { class: "faint small-print" }, [i.file ? `${i.file}${i.line ? `:${i.line}` : ""}` : "project", `ref ${i.ref}`,
+            i.commit_sha ? `commit ${i.commit_sha}` : null].filter(Boolean).join(" · ")),
+          i.note ? h("div", { class: "small-print" }, i.note) : null),
+        h("span", { class: `chip ${tone === "accent" ? "accent" : ""}`, style: tone === "good" ? "color:var(--good)" : tone === "warn" ? "color:var(--medium)" : "" },
+          i.status === "working" ? h("span", { class: "spinner small" }) : null, ` ${label}`));
+    })));
+}
+
+function risksCard(id, accepted) {
+  if (!accepted.length) {
+    return h("section", { class: "card" }, h("h2", null, "Known risks"),
+      h("p", { class: "faint" }, "None. When you or your AI assistant accept a finding as a deliberate risk, it's listed here with the reason, and you can undo it."));
+  }
+  return h("section", { class: "card flush" },
+    h("div", { class: "card-head" }, h("h2", null, `Known risks (${accepted.length})`),
+      h("p", { class: "faint" }, "Accepted findings aren't counted in the grade until they expire. Undo one and it counts again from the next scan.")),
+    h("div", { class: "list" }, accepted.map((a) => h("div", { class: "check-item" },
+      sevPill(a.severity || "info"),
+      h("div", { class: "grow" },
+        h("div", null, h("strong", null, a.title), " ",
+          a.by === "agent" ? h("span", { class: "chip", style: "color:var(--medium)" }, "accepted by an AI assistant") : h("span", { class: "chip" }, "accepted by you")),
+        h("div", { class: "small-print" }, `Why: ${a.reason}`),
+        h("div", { class: "faint small-print" }, [a.file ? `${a.file}${a.line ? `:${a.line}` : ""}` : "project", `ref ${a.ref}`,
+          `accepted ${ago(a.since)}`, a.expires ? `until ${new Date(a.expires).toLocaleDateString()}` : "no expiry"].join(" · "))),
+      h("button", { class: "btn small", onclick: async (e) => {
+        try {
+          await api("POST", `/api/projects/${id}/risks/undo`, { ref: a.ref });
+          toast("Undone. It counts again from the next scan.");
+          renderProject(id, "chat", state.view);
+        } catch (err) { toast(err.message); }
+      } }, "Undo")))));
+}
+
 function drawHistory(container, history) {
   container.append(h("div", { class: "card flush table-wrap" }, h("table", null,
     h("thead", null, h("tr", null, ["When", "Profile", "Grade", "Score", ""].map((t) => h("th", null, t)))),
@@ -1689,6 +1843,18 @@ const HELP = [
     "The first review reads everything. Later reviews only re-read code that changed. Stopping is safe at any time; the next run continues from where it stopped.",
     "The nightly review is a Windows scheduled task for your account. It runs only when plugged in, at low priority, and stops at the time you choose.",
   ]],
+  ["chat", "Fixing from your AI chat", [
+    "LadPock connects to AI chat apps through MCP, a standard most coding assistants support: Claude Code, Codex, Cursor, VS Code, Windsurf and others. Connect it once with 'ladpock connect' in a terminal (for example 'ladpock connect claude', or 'ladpock connect' to see the choices). Restart the app afterwards.",
+    "Then, in a chat opened in your project's folder, ask in plain words: “what did LadPock find?”, or “use LadPock to fix these one by one”. In Claude Code, /ladpock and /ladpock fix do the same.",
+    "How fixing works:",
+    ["Your assistant gets one finding at a time, worst first, with where it is and how to fix it.",
+      "After each fix, LadPock re-scans. It only counts as fixed if the problem is really gone, not just moved, and nothing new broke. Anything new joins the list.",
+      "With 'Commit each fix separately' on (the default), each confirmed fix becomes its own commit, so any one fix is easy to undo. Your assistant never pushes.",
+      "It stops and asks you when a fix fails twice, when it introduces something serious, or when a fix would change how your app behaves.",
+      "You can follow along on the project's Fix in chat tab."],
+    "Your assistant can accept a finding as a known risk if it isn't a real problem or is a deliberate choice, but only with a written reason and an expiry of at most a year. It's never hidden: it's listed under Known risks, labelled as accepted by an AI assistant, the grade notes it, and you can undo it. Critical findings can only be accepted by you.",
+    "For a project added from GitHub, fix in your own clone: LadPock's copy is reset from GitHub before every scan.",
+  ]],
   ["github", "Projects from GitHub", [
     "On Add project, paste a link to your GitHub account (github.com/you) to choose from all your repositories, or a link to one repository. LadPock then:",
     ["keeps its own copy of each repository in its data folder, separate from your own folders, so nothing you're working on is ever touched",
@@ -1723,7 +1889,7 @@ const HELP = [
     "Both are heuristic. Read “no” as “go and look”.",
   ]],
   ["accept", "Accepting a risk", [
-    "If a finding is a deliberate choice, use Accept risk… on it. You give a reason and an expiry (90 days by default), and it's hidden from future scans until then.",
+    "If a finding is a deliberate choice, use Accept risk… on it. You give a reason and an expiry (90 days by default), and from the next scan it moves from the findings list to Known risks, on the project's Fix in chat tab, until then. It doesn't count towards the grade, and you can undo it there. Risks your AI assistant accepts are listed the same way, marked as accepted by an AI assistant.",
     "You can also add a `ladpock-ignore` comment on the line. Hidden findings are always counted on the results page, so you'll notice if anything (including an AI assistant) quietly hides one.",
   ]],
   ["human", "Needs a human", [

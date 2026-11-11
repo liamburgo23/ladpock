@@ -245,6 +245,28 @@ def cmd_github(args, db: DB) -> int:
     return 1 if failed == len(repos) else 0
 
 
+def cmd_connect(args, db: DB) -> int:
+    from . import connect
+
+    if args.print_only and args.app:
+        print(connect.snippet(connect.find(args.app)))
+        return 0
+    if not args.app:
+        print("Connect LadPock to an AI coding app, so you can ask it about LadPock's findings and have it fix them:\n")
+        for app in connect.apps():
+            status = "connected" if connect.is_connected(app) else ("installed" if app.installed() else "not found")
+            print(f"  ladpock connect {app.key.ljust(9)} {app.name.ljust(12)} {status}")
+        print("\nOther apps: add an MCP server that runs: " + " ".join(f'"{part}"' if " " in part else part for part in connect.server_command()))
+        return 0
+    try:
+        for line in connect.connect(args.app, remove=args.remove):
+            print(line)
+    except connect.ConnectError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    return 0
+
+
 def cmd_projects(args, db: DB) -> int:
     if args.action == "list":
         rows = db.list_projects()
@@ -504,6 +526,12 @@ def build_parser() -> argparse.ArgumentParser:
     sup.add_argument("--days", type=int, default=90, help="expire after this many days (0 = never; default 90)")
     sup.add_argument("--path", default=".")
 
+    con = sub.add_parser("connect", help="add LadPock to Claude Code, Codex, Cursor, VS Code or Windsurf, so your AI chat can use it")
+    con.add_argument("app", nargs="?", choices=["claude", "codex", "cursor", "vscode", "windsurf"],
+                     help="leave out to see which apps are installed and connected")
+    con.add_argument("--remove", action="store_true", help="take LadPock out of that app again")
+    con.add_argument("--print", dest="print_only", action="store_true", help="only print what to add, change nothing")
+
     gh = sub.add_parser("github", help="add (and scan) repositories from GitHub by link: your profile for all of them, or one repository")
     gh.add_argument("link", help="e.g. https://github.com/you, https://github.com/you/your-app or you/your-app")
     gh.add_argument("--list", action="store_true", help="only list what's there")
@@ -551,7 +579,7 @@ def build_parser() -> argparse.ArgumentParser:
 COMMANDS = {
     None: cmd_status, "status": cmd_status, "scan": cmd_scan, "full-check": cmd_full_check, "routes": cmd_routes, "sbom": cmd_sbom,
     "fix-prompt": cmd_fix_prompt,
-    "advisories": cmd_advisories, "suppress": cmd_suppress, "projects": cmd_projects, "github": cmd_github, "checks": cmd_checks,
+    "advisories": cmd_advisories, "suppress": cmd_suppress, "projects": cmd_projects, "github": cmd_github, "connect": cmd_connect, "checks": cmd_checks,
     "doctor": cmd_doctor, "ui": cmd_ui, "scanners": cmd_scanners, "ai": lambda args, db: _ai_run(args, db),
     "shortcut": cmd_shortcut, "mcp": lambda args, db: _mcp(), "precommit": lambda args, db: _precommit(), "hook": lambda args, db: _hook(args),
 }

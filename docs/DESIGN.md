@@ -370,6 +370,28 @@ worse than a `package.json` holding `{"dependencies": 5}`, and a hang in a regex
 **More kinds of software.** Notebooks are read up to 20 MB, because saved charts make them big and keys can sit in any cell or output. MCP tools are flagged because a model
 picks their arguments, and any text it reads can steer that, so a tool taking a whole command is remote code execution with extra steps.
 
+## Fixing from a chat (0.19.0)
+
+- **The assistant edits, LadPock judges.** `fixloop.py` keeps a fix run (`fix_runs`, `fix_items`) and hands out one
+  finding at a time; the assistant's own tools and permissions do the editing. This keeps rule 1 (LadPock never
+  edits code) and means it works in any MCP client, with the context of the chat the person is already in.
+- **A fix is a re-scan.** `fix_check` runs a standard scan and compares refs. Refs hash the snippet, so a reworded
+  line gets a new ref: if the same check fires in the same file under a ref the run hasn't seen, the problem moved
+  rather than went. New refs elsewhere join the run at their own severity, and `_current` always picks the worst
+  open item, so a fix that breaks something gets fixed next.
+- **Stopping is in the text.** MCP has no way to pause a model, so the answers say STOP and what to ask the person.
+  Two failed tries, or anything high or critical introduced, ends in STOP.
+- **Accepting is visible.** Acceptances are the existing suppressions with `accepted_by`. The scan summary keeps
+  them as `accepted` (ref, title, reason, who, expiry), every findings answer repeats them, the grade notes how many
+  an assistant accepted, and the dashboard lists them with undo. Critical findings, short reasons and open-ended
+  expiries are refused for assistants.
+- **Commits are the assistant's.** LadPock tells it the message (`Fix: <title> (LadPock <ref>)`) and to commit only
+  that fix's files and never push, then matches commits to fixes by ref from `git log` subjects.
+- **Where to fix.** LadPock's GitHub copies are refused; a folder whose `origin` is the same GitHub repository is
+  linked to the GitHub project by reading `.git/config` as text.
+- **`ladpock connect`** writes one `ladpock` entry in each app's MCP settings (JSON for most, TOML for Codex) and a
+  `/ladpock` command file for Claude Code. It backs up, writes atomically, and refuses files it can't parse exactly.
+
 ## Repositories from GitHub (0.18.0)
 
 - **LadPock owns the copy.** Repositories are cloned into `data_dir()/github/<owner>/<repo>`, never into a folder the

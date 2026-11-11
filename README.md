@@ -301,6 +301,7 @@ you've scanned before.
 | `ladpock checks` | List every check |
 | `ladpock shortcut [remove] [--desktop]` | Add or remove a launcher for the dashboard |
 | `ladpock --version` | Show the installed version |
+| `ladpock connect [app]` | Add LadPock to Claude Code, Codex, Cursor, VS Code or Windsurf (`--remove`, `--print`) |
 | `ladpock mcp` | Run as an MCP server for Claude Code and other AI assistants |
 | `ladpock hook install\|remove [path]` | Add or remove a git pre-commit hook that stops commits adding secrets |
 | `ladpock doctor [path]` | Check your setup and optional scanners |
@@ -368,16 +369,47 @@ record, and treats records both accounts can list as shared. It also reports adm
 and answers that need a login but are marked cacheable. This check only reads, even with `--live-writes`. The login values are held in memory, only sent to your app on this
 computer, and never logged or saved.
 
-### With Claude Code
+### From your AI chat: Claude Code, Codex, Cursor, VS Code and others
+
+LadPock is an MCP server, the standard most AI coding apps use for tools. Connect it once:
 
 ```bash
-claude mcp add ladpock -- ladpock mcp
+ladpock connect
 ```
 
-This gives Claude Code tools to scan a project (optionally reporting only the files it changed), list the last
-findings, read the route matrix, explain the grade and get a fix prompt. It can scan after it edits auth, data
-access or payment code, and check whether its fix worked, because every scan reports what changed since the
-previous one. The server only reads your projects and LadPock's database.
+That lists the apps it found. Then run, for example, `ladpock connect claude` (or `codex`, `cursor`, `vscode`,
+`windsurf`) and restart the app. For any other app, add an MCP server that runs `ladpock mcp`
+(`ladpock connect <app> --print` shows the exact settings).
+
+Then, in a chat opened in your project's folder, ask in plain words:
+
+- *"What did LadPock find?"* Your assistant scans and sums up the grade, the worst problems and any accepted risks.
+- *"Use LadPock to fix these one by one."* It works through the findings, worst first.
+
+In Claude Code, `/ladpock` and `/ladpock fix` do the same (`ladpock connect claude` adds the command), and apps that
+show MCP prompts list LadPock's there too.
+
+**How fixing works:**
+
+- Your assistant gets one finding at a time, with where it is, why it matters and how to fix it.
+- After each fix, LadPock re-scans. It only counts as fixed if the problem is really gone (not just moved or reworded)
+  and nothing new broke. Anything new joins the list at its own severity.
+- With **Commit each fix separately** on (the default, on the project's Fix in chat tab), each confirmed fix becomes
+  its own commit naming the finding, so any one fix is easy to undo. Your assistant never pushes.
+- It stops and asks you when a fix fails twice, when a fix introduces something serious, or when a fix would change
+  how your app behaves.
+- Your assistant can accept a finding as a **known risk** if it isn't a real problem or is a deliberate choice, but
+  only with a written reason and an expiry of at most a year. It's never hidden: the project's **Fix in chat** tab
+  lists it under Known risks, labelled as accepted by an AI assistant, the grade says "includes N risks accepted by
+  an AI assistant", and you can undo it with one click. Critical findings can only be accepted by you.
+- The dashboard shows the run as it happens: which finding is being worked on, what was fixed (with its commit),
+  what's left for you and why.
+
+For a project added from GitHub, open the chat in your own clone: LadPock's copy is reset before every scan. LadPock
+recognises your clone from its GitHub address.
+
+LadPock never edits your code itself. The MCP server reads your projects, and records the fix run and any risks
+your assistant accepted, so the dashboard can show them.
 
 ```bash
 ladpock hook install
@@ -389,7 +421,7 @@ won't replace an existing hook unless you pass `--force`; `ladpock hook remove` 
 ### In CI
 
 ```yaml
-- uses: liamburgo23/ladpock@v0.18.0
+- uses: liamburgo23/ladpock@v0.19.0
   with:
     fail-on: high   # critical, high, medium or low; leave empty to never fail
 ```
@@ -411,7 +443,7 @@ ladpock scan . --write-baseline .ladpock-baseline.json
 ```
 
 ```yaml
-- uses: liamburgo23/ladpock@v0.18.0
+- uses: liamburgo23/ladpock@v0.19.0
   with:
     baseline: .ladpock-baseline.json
 ```

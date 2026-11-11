@@ -164,7 +164,46 @@ CREATE TABLE IF NOT EXISTS suppressions (
     expires_at TEXT,
     PRIMARY KEY (project_id, ref)
 );
+-- Working through findings one at a time from a chat (see fixloop.py).
+CREATE TABLE IF NOT EXISTS fix_runs (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    started_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    finished_at TEXT,
+    status TEXT NOT NULL DEFAULT 'active',
+    scope TEXT NOT NULL,
+    notes TEXT,
+    agent TEXT,
+    commits INTEGER NOT NULL DEFAULT 1,
+    baseline TEXT
+);
+CREATE TABLE IF NOT EXISTS fix_items (
+    run_id INTEGER NOT NULL REFERENCES fix_runs(id) ON DELETE CASCADE,
+    ref TEXT NOT NULL,
+    position INTEGER NOT NULL,
+    check_id TEXT,
+    title TEXT,
+    severity TEXT,
+    file TEXT,
+    line INTEGER,
+    status TEXT NOT NULL DEFAULT 'queued',
+    attempts INTEGER NOT NULL DEFAULT 0,
+    note TEXT,
+    commit_sha TEXT,
+    updated_at TEXT,
+    PRIMARY KEY (run_id, ref)
+);
 """
+
+
+# One fixed statement per field a fix run can change, so no SQL is ever built from text.
+FIX_ITEM_UPDATES = {
+    "status": "UPDATE fix_items SET status = ?, updated_at = ? WHERE run_id = ? AND ref = ?",
+    "attempts": "UPDATE fix_items SET attempts = ?, updated_at = ? WHERE run_id = ? AND ref = ?",
+    "note": "UPDATE fix_items SET note = ?, updated_at = ? WHERE run_id = ? AND ref = ?",
+    "commit_sha": "UPDATE fix_items SET commit_sha = ?, updated_at = ? WHERE run_id = ? AND ref = ?",
+}
 
 
 def path_key(path: Path) -> str:
@@ -192,6 +231,10 @@ class DB:
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(ai_runs)")}
         if "rejected" not in columns:
             self.conn.execute("ALTER TABLE ai_runs ADD COLUMN rejected INTEGER DEFAULT 0")
+        columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(suppressions)")}
+        if "accepted_by" not in columns:
+            # Who accepted the risk: "you" (the dashboard or command line) or "agent" (an AI assistant, through MCP).
+            self.conn.execute("ALTER TABLE suppressions ADD COLUMN accepted_by TEXT NOT NULL DEFAULT 'you'")
         columns = {r["name"] for r in self.conn.execute("PRAGMA table_info(ai_leads)")}
         if "online_verdict" not in columns:
             self.conn.execute("ALTER TABLE ai_leads ADD COLUMN online_verdict TEXT")
@@ -555,18 +598,84 @@ class DB:
         self.conn.commit()
 
     # suppressions
-    def add_suppression(self, project_id: int, ref: str, reason: str, days: int | None) -> None:
+    def add_suppression(self, project_id: int, ref: str, reason: str, days: int | None, by: str = "you") -> None:
         expires = iso(now() + timedelta(days=days)) if days else None
         self.conn.execute(
-            "INSERT INTO suppressions (project_id, ref, reason, created_at, expires_at) VALUES (?, ?, ?, ?, ?) "
-            "ON CONFLICT(project_id, ref) DO UPDATE SET reason = excluded.reason, created_at = excluded.created_at, expires_at = excluded.expires_at",
-            (project_id, ref, reason, iso(), expires),
+            "INSERT INTO suppressions (project_id, ref, reason, created_at, expires_at, accepted_by) VALUES (?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT(project_id, ref) DO UPDATE SET reason = excluded.reason, created_at = excluded.created_at, "
+            "expires_at = excluded.expires_at, accepted_by = excluded.accepted_by",
+            (project_id, ref, reason, iso(), expires, by),
         )
         self.conn.commit()
 
     def active_suppressions(self, project_id: int) -> dict[str, str]:
+        return {ref: row["reason"] for ref, row in self.accepted_risks(project_id).items()}
+
+    def accepted_risks(self, project_id: int) -> dict[str, sqlite3.Row]:
+        """Accepted risks that haven't expired, by ref, with who accepted them, why and until when."""
         rows = self.conn.execute(
-            "SELECT ref, reason FROM suppressions WHERE project_id = ? AND (expires_at IS NULL OR expires_at > ?)",
+            "SELECT ref, reason, created_at, expires_at, accepted_by FROM suppressions "
+            "WHERE project_id = ? AND (expires_at IS NULL OR expires_at > ?) ORDER BY created_at",
             (project_id, iso()),
         ).fetchall()
-        return {r["ref"]: r["reason"] for r in rows}
+        return {r["ref"]: r for r in rows}
+
+    def remove_suppression(self, project_id: int, ref: str) -> bool:
+        cur = self.conn.execute("DELETE FROM suppressions WHERE project_id = ? AND ref = ?", (project_id, ref))
+        self.conn.commit()
+        return cur.rowcount > 0
+
+    # fix runs: an assistant working through findings one at a time
+    def fix_run_start(self, project_id: int, scope: str, notes: str, agent: str, commits: bool, baseline: list[str],
+                      items: list[dict]) -> int:
+        stamp = iso()
+        self.conn.execute("UPDATE fix_runs SET status = 'replaced', finished_at = ?, updated_at = ? WHERE project_id = ? AND status = 'active'",
+                          (stamp, stamp, project_id))
+        cur = self.conn.execute(
+            "INSERT INTO fix_runs (project_id, started_at, updated_at, scope, notes, agent, commits, baseline) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (project_id, stamp, stamp, scope, notes, agent, int(commits), json.dumps(baseline)))
+        run_id = int(cur.lastrowid)
+        for position, item in enumerate(items):
+            self._fix_item_insert(run_id, position, item)
+        self.conn.commit()
+        return run_id
+
+    def _fix_item_insert(self, run_id: int, position: int, item: dict) -> None:
+        self.conn.execute(
+            "INSERT OR IGNORE INTO fix_items (run_id, ref, position, check_id, title, severity, file, line, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (run_id, item["ref"], position, item.get("check_id"), item.get("title"), item.get("severity"), item.get("file"),
+             item.get("line"), iso()))
+
+    def fix_items_append(self, run_id: int, items: list[dict]) -> None:
+        last = self.conn.execute("SELECT COALESCE(MAX(position), -1) FROM fix_items WHERE run_id = ?", (run_id,)).fetchone()[0]
+        for offset, item in enumerate(items, 1):
+            self._fix_item_insert(run_id, last + offset, item)
+        self.conn.commit()
+
+    def fix_run(self, run_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM fix_runs WHERE id = ?", (run_id,)).fetchone()
+
+    def active_fix_run(self, project_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM fix_runs WHERE project_id = ? AND status = 'active' ORDER BY id DESC LIMIT 1",
+                                 (project_id,)).fetchone()
+
+    def latest_fix_run(self, project_id: int) -> sqlite3.Row | None:
+        return self.conn.execute("SELECT * FROM fix_runs WHERE project_id = ? ORDER BY id DESC LIMIT 1", (project_id,)).fetchone()
+
+    def fix_items(self, run_id: int) -> list[sqlite3.Row]:
+        return self.conn.execute("SELECT * FROM fix_items WHERE run_id = ? ORDER BY position", (run_id,)).fetchall()
+
+    def fix_item_update(self, run_id: int, ref: str, **fields) -> None:
+        stamp = iso()
+        for key, value in fields.items():
+            statement = FIX_ITEM_UPDATES.get(key)
+            if statement is None:
+                raise ValueError(f"fix_items has no field {key}")
+            self.conn.execute(statement, (value, stamp, run_id, ref))
+        self.conn.execute("UPDATE fix_runs SET updated_at = ? WHERE id = ?", (stamp, run_id))
+        self.conn.commit()
+
+    def fix_run_finish(self, run_id: int, status: str) -> None:
+        stamp = iso()
+        self.conn.execute("UPDATE fix_runs SET status = ?, finished_at = ?, updated_at = ? WHERE id = ?", (status, stamp, stamp, run_id))
+        self.conn.commit()

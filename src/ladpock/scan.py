@@ -287,6 +287,12 @@ def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bo
     hidden = {id(f) for f in findings if f.fingerprint in suppressions or inline_ignored(ctx, f) or project_config.hides(f.check_id, f.file)}
     suppressed = [f for f in findings if id(f) in hidden]
     findings = [f for f in findings if id(f) not in hidden]
+    # Accepted risks stay on record, with who accepted them and why, so none is ever silently hidden.
+    risks = db.accepted_risks(project_id)
+    accepted = [{**{k: f.to_dict().get(k) for k in ("ref", "check_id", "title", "severity", "category", "file", "line")},
+                 "reason": risks[f.fingerprint]["reason"], "by": risks[f.fingerprint]["accepted_by"],
+                 "since": risks[f.fingerprint]["created_at"], "expires": risks[f.fingerprint]["expires_at"]}
+                for f in suppressed if f.fingerprint in risks]
     findings.sort(key=lambda f: (-f.severity, f.category, f.file or "", f.line or 0))
 
     categories = settings["categories"] if settings["categories"] is not None else set(CATEGORIES)
@@ -300,6 +306,7 @@ def run_scan(path: str | Path, db: DB, *, profile: str = "standard", offline: bo
         "dependencies": len(components),
         "checks_run": checks_run,
         "suppressed": len(suppressed),
+        "accepted": accepted,
         "coverage": {"deep": deep, "generic": generic},
         "feeds": [vars(f) for f in feeds],
         "scanners": [{"name": s.name, "available": s.available, "ran": s.ran, "error": s.error} for s in scanners],

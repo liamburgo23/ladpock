@@ -399,6 +399,12 @@ def _find_sinks(statement: str, language: str, tainted: dict[str, Tainted]) -> I
             used = _used(values, tainted)
             if not used:
                 continue
+            if sink.args not in ("rest", "raw"):
+                # Handed to a call we don't know (a template renderer, your own helper), the value might come back escaped or
+                # not at all: the same rule as for assignments, so `res.send(ejs.render(tpl, { name }))` isn't reported.
+                calls = [callee.replace("->", ".").replace("::", ".") for callee in CALLEE.findall(values)]
+                if any(LOOKUP.search(callee) or not PASSES_ALONG.search(callee) for callee in calls):
+                    continue
             var = tainted[used[0]]
             if sink.kind == "sql" and not (any(tainted[n].sql for n in used) or SQL_WORDS.search(argument)):
                 continue

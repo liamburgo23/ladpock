@@ -43,7 +43,8 @@ class McpServer(unittest.TestCase):
         self.assertEqual(replies[0]["result"]["protocolVersion"], "2025-03-26")
         names = {t["name"] for t in replies[1]["result"]["tools"]}
         self.assertEqual(names, {"ladpock_scan", "ladpock_findings", "ladpock_routes", "ladpock_explain_grade",
-                                 "ladpock_fix_prompt"})
+                                 "ladpock_fix_prompt", "ladpock_fix_start", "ladpock_fix_check", "ladpock_fix_next",
+                                 "ladpock_fix_skip", "ladpock_accept_risk", "ladpock_fix_stop"})
         self.assertEqual(replies[2]["error"]["code"], -32601)
 
     def test_scan_then_read_results(self):

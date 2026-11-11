@@ -3,6 +3,25 @@
 All notable changes to LadPock. Versions follow [semantic versioning](https://semver.org/); while LadPock is below
 1.0, minor versions can include changes to checks and grades.
 
+## [0.19.0] - 2026-11-11
+
+### Added
+- Fix findings one by one from your AI chat. Ask your assistant to "use LadPock to fix these one by one" (or `/ladpock fix` in Claude Code): it gets one
+  finding at a time, worst first, and LadPock re-scans after each fix to confirm the problem is really gone and nothing new broke. It stops and asks you
+  when a fix fails twice, introduces something serious, or would change how your app behaves. Works in any app that supports MCP.
+- Each confirmed fix can be its own commit (on by default, a toggle on the project's new Fix in chat tab), so any one fix is easy to undo.
+- Known risks: an assistant can accept a non-critical finding only with a written reason and an expiry of at most a year. It's listed, labelled as
+  accepted by an AI assistant, noted beside the grade, and you can undo it. Risks you accept are listed there too.
+- The Fix in chat tab shows the run live: what's being worked on, what was fixed (with its commit), and what's left for you and why. The home page
+  shows "Fixing in chat" on the project.
+- `ladpock connect` adds LadPock to Claude Code, Codex, Cursor, VS Code or Windsurf, and a `/ladpock` command to Claude Code.
+- MCP prompts (`ladpock`, `fix`) for apps that show them as commands.
+
+### Fixed
+- A value passed as data into a function LadPock doesn't know, such as `ejs.render(template, { name })`, was reported as reaching the page. It now follows
+  the same rule as assignments: the trail stops at an unknown call.
+- An empty or relative path given to the MCP tools meant whatever folder LadPock was running in. They now need an absolute path.
+
 ## [0.18.0] - 2026-11-10
 
 ### Added

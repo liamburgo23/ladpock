@@ -87,9 +87,22 @@ follows; a change that breaks one is a security bug.
    Files that aren't valid, or that hold the wrong types, are skipped rather than trusted, and a failure reading one kind of route
    can't lose the others. `tests/test_slow_input.py` runs the worst cases we know of against every file LadPock parses.
 
-14. **The MCP server and the git hook only read.** `ladpock mcp` talks JSON-RPC over stdin/stdout to the client
-   that started it. Its tools scan, list findings and build fix prompts; none edits code or settings, and results
-   are masked like every other report. `ladpock hook install` writes one pre-commit hook. It refuses to overwrite
+14. **The MCP server and the git hook never edit your code.** `ladpock mcp` talks JSON-RPC over stdin/stdout to
+   the client that started it. Its tools scan, list findings, build fix prompts and guide an assistant through
+   fixes; the assistant does any editing, with its own permissions, and results are masked like every other report.
+   The server writes only to LadPock's database: the record of a fix run, and risks the assistant accepted.
+
+   An assistant can't make a finding disappear. It can accept a non-critical finding as a known risk only with a
+   written reason (checked for length) and an expiry of at most 365 days. The acceptance is stored as made by an
+   assistant, listed under Known risks with that reason, repeated in every findings answer the server gives, and
+   noted beside the grade; you can undo it from the dashboard. Critical findings can only be accepted by you. A fix
+   counts only when a fresh scan no longer finds it, and the same check doesn't reappear in the same file under a
+   new reference. Paths must be absolute, and LadPock's own GitHub copies are refused, since fixes there would be
+   reset. LadPock never runs git commands that change anything: it reads recent commit subjects to match commits
+   to fixes.
+
+   `ladpock connect` changes one entry, named `ladpock`, in the chosen app's MCP settings. It leaves an existing
+   entry alone, backs up the file first, replaces it in one step, and won't edit a file it can't parse exactly. `ladpock hook install` writes one pre-commit hook. It refuses to overwrite
    an existing hook unless told to, keeps a backup, and restores it on removal.
 
 15. **Copies of GitHub repositories can't run anything or reach outside LadPock's folder.** LadPock clones only

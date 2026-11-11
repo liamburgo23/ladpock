@@ -106,6 +106,9 @@ main { max-width: 1120px; margin: 0 auto; padding: 24px; outline: none; }
 .btn[aria-busy="true"] { opacity: .7; cursor: progress; }
 
 .banner { border-radius: 12px; padding: 16px 20px; background: var(--critical-bg); border: 1px solid color-mix(in srgb, var(--critical) 35%, transparent); }
+.banner.info { background: var(--accent-bg); border-color: color-mix(in srgb, var(--accent) 35%, transparent); }
+.card-head { padding: 16px 20px; border-bottom: 1px solid var(--border); }
+.card-head h2 { margin: 0 0 4px; }
 .banner h2 { color: var(--critical); }
 .banner ul { margin: 10px 0 0; padding: 0; list-style: none; }
 .banner li { padding: 4px 0; display: flex; gap: 10px; flex-wrap: wrap; align-items: baseline; font-size: 14px; }

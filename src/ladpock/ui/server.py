@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs, urlsplit
 
-from .. import __version__, advisories, github, probe, report, report_html, scoring, tauri
+from .. import __version__, advisories, fixloop, github, probe, report, report_html, scoring, tauri
 from ..ai import keys as ai_keys
 from ..ai import online as ai_online
 from ..ai import review as ai_review
@@ -323,6 +323,9 @@ def _project_summary(db: DB, row, vulnerable: dict[int, set]) -> dict:
     return {
         "id": row["id"], "name": row["name"], "path": row["path"], "exists": Path(row["path"]).is_dir(),
         "github": github.managed_name(row["path"]),
+        "remote": None if github.managed_name(row["path"]) else fixloop.github_remote(Path(row["path"])),
+        "accepted_by_agent": sum(1 for r in db.accepted_risks(row["id"]).values() if r["accepted_by"] == "agent"),
+        "fixing": _fixing(db, row["id"]),
         "grade": row["last_grade"], "score": row["last_score"], "last_scan_at": row["last_scan_at"],
         "stack": deep + generic, "vulnerable_deps": len(vulnerable.get(row["id"], ())),
     }
@@ -340,6 +343,58 @@ def status_payload(db: DB) -> dict:
         "feeds": _feed_status(db),
         "projects": [_project_summary(db, p, vulnerable) for p in db.list_projects()],
         "new": [_hit_dict(h) for h in advisories.new_since(hits, last_opened)][:50],
+    }
+
+
+def _fixing(db: DB, project_id: int) -> dict | None:
+    """A fix run going on in a chat, for the badge on the home page."""
+    run = db.active_fix_run(project_id)
+    if not run:
+        return None
+    items = db.fix_items(run["id"])
+    done = sum(1 for i in items if i["status"] not in fixloop.OPEN)
+    return {"run": run["id"], "done": done, "total": len(items), "agent": run["agent"] or "", "updated_at": run["updated_at"]}
+
+
+def fixes_payload(db: DB, row) -> dict:
+    """The latest fix run with every item, the commit setting, and where fixes for this project should happen."""
+    run = db.latest_fix_run(row["id"])
+    if run and run["commits"] and Path(row["path"]).is_dir():
+        fixloop.note_commits(db, run, Path(row["path"]))  # a commit made after the last fix of a run still gets matched
+    remote = github.managed_name(row["path"]) or fixloop.github_remote(Path(row["path"]))
+    linked = []
+    if remote:
+        # The same repository, elsewhere: a GitHub project's working copies, or a working copy's GitHub project.
+        for other in db.list_projects():
+            if other["id"] == row["id"]:
+                continue
+            other_remote = github.managed_name(other["path"]) or fixloop.github_remote(Path(other["path"]))
+            if other_remote and other_remote.lower() == remote.lower():
+                linked.append({"id": other["id"], "name": other["name"], "path": other["path"],
+                               "github": bool(github.managed_name(other["path"]))})
+    # Known risks come straight from what's been accepted, so one accepted a moment ago shows before the next scan.
+    scan = db.latest_scan(row["id"])
+    about: dict[str, dict] = {}
+    if scan:
+        about.update({f["ref"]: f for f in db.scan_findings(scan["id"])})
+        about.update({a["ref"]: a for a in (json.loads(scan["summary"] or "{}").get("accepted") or [])})
+    risks = []
+    for ref, risk in db.accepted_risks(row["id"]).items():
+        f = about.get(ref, {})
+        risks.append({"ref": ref, "title": f.get("title") or "A finding the last scan didn't see", "severity": f.get("severity") or "info",
+                      "file": f.get("file"), "line": f.get("line"), "reason": risk["reason"], "by": risk["accepted_by"],
+                      "since": risk["created_at"], "expires": risk["expires_at"]})
+    return {
+        "commits": fixloop.commits_enabled(db),
+        "risks": risks,
+        "linked": linked,
+        "run": None if not run else {
+            "id": run["id"], "status": run["status"], "started_at": run["started_at"], "updated_at": run["updated_at"],
+            "finished_at": run["finished_at"], "scope": run["scope"], "notes": run["notes"], "agent": run["agent"],
+            "commits": bool(run["commits"]),
+            "items": [{k: i[k] for k in ("ref", "check_id", "title", "severity", "file", "line", "status", "attempts", "note",
+                                         "commit_sha", "updated_at")} for i in db.fix_items(run["id"])],
+        },
     }
 
 
@@ -376,6 +431,7 @@ def project_payload(app: App, db: DB, project_id: int) -> dict:
         "categories": CATEGORIES,
         "ai": ai_payload(app, db, project_id, row),
         "assessment": assessment_payload(db, project_id, scan, findings, summary, human),
+        "fixes": fixes_payload(db, row),
     }
 
 
@@ -1091,6 +1147,27 @@ def api_suppress(app, db, match, query, body):
     return 200, {"ok": True}
 
 
+def api_fixes(app, db, match, query, body):
+    row = db.get_project_by_id(_project_id(match))
+    if not row:
+        raise ApiError(404, "Project not found")
+    return 200, fixes_payload(db, row)
+
+
+def api_fix_commits(app, db, match, query, body):
+    fixloop.set_commits(db, _bool(body, "enabled"))
+    return 200, {"commits": fixloop.commits_enabled(db)}
+
+
+def api_undo_risk(app, db, match, query, body):
+    ref = str(body.get("ref", ""))
+    if not re.fullmatch(r"[0-9a-f]{10}", ref):
+        raise ApiError(400, "Unknown finding reference")
+    if not db.remove_suppression(_project_id(match), ref):
+        raise ApiError(404, "That risk isn't accepted")
+    return 200, {"ok": True}
+
+
 def api_human(app, db, match, query, body):
     item = str(body.get("item", ""))
     if not re.fullmatch(r"H-\d{2}", item):
@@ -1125,6 +1202,9 @@ ROUTES: list[tuple[str, re.Pattern[str], Callable]] = [
     ("GET", re.compile(r"/api/projects/(\d+)/report"), api_report),
     ("POST", re.compile(r"/api/projects/(\d+)/suppress"), api_suppress),
     ("POST", re.compile(r"/api/projects/(\d+)/human"), api_human),
+    ("GET", re.compile(r"/api/projects/(\d+)/fixes"), api_fixes),
+    ("POST", re.compile(r"/api/projects/(\d+)/risks/undo"), api_undo_risk),
+    ("POST", re.compile(r"/api/settings/fix-commits"), api_fix_commits),
     ("GET", re.compile(r"/api/jobs/([0-9a-f]{32})"), api_job),
     ("GET", re.compile(r"/api/browse"), api_browse),
     ("GET", re.compile(r"/api/github"), api_github),

@@ -3,8 +3,9 @@
 that stops secrets being committed.
 
 The MCP server speaks JSON-RPC over stdin/stdout using only the standard
-library. It only reads projects and LadPock's own database; it never edits
-code or settings.
+library. It never edits code: the assistant does that. Besides reading
+projects, it keeps the record of a fix run and of risks the assistant accepted
+(see fixloop.py), which the dashboard shows.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ import sys
 from pathlib import Path
 from typing import Callable, TextIO
 
-from . import __version__, report, scoring
+from . import __version__, fixloop, report, scoring
 from .checks import ScanContext, inline_ignored, run_all
 from .db import DB
 from .files import FileIndex
@@ -28,6 +29,32 @@ from .stack import detect
 
 PROTOCOL_VERSIONS = ("2025-06-18", "2025-03-26", "2024-11-05")
 SEVERITY_NAMES = [s.label for s in Severity if s > Severity.INFO]
+
+PROMPTS = [
+    {"name": "ladpock", "title": "LadPock: what did it find?",
+     "description": "Scan the project you're working in and summarise what LadPock found",
+     "arguments": []},
+    {"name": "fix", "title": "LadPock: fix findings one by one",
+     "description": "Work through LadPock's findings one at a time, checking each fix with a re-scan",
+     "arguments": [{"name": "which", "description": "critical, high (default), medium, low or all; or what the user asked for in words",
+                    "required": False}]},
+]
+
+
+def prompt_text(name: str, args: dict) -> str:
+    if name == "ladpock":
+        return ("Use LadPock on the project in the folder you're working in. Call ladpock_scan with that folder's absolute path. "
+                "Then tell me in a few lines: the grade, the most serious problems (with file and line), and any known risks that "
+                "were accepted. Finish by offering to fix them one by one with ladpock_fix_start.")
+    if name == "fix":
+        which = str(args.get("which") or "").strip() or "high"
+        return ("Use LadPock to fix this project's security findings one at a time. Call ladpock_fix_start with the absolute path of "
+                f"the folder you're working in and which='{which}' (if that isn't one of critical, high, medium, low or all, pick the "
+                "closest, or pass the refs I meant). Then follow LadPock's instructions exactly: fix one finding, call "
+                "ladpock_fix_check, commit if it says to, and carry on until it says you're done or says STOP. "
+                "When it's finished, tell me what was fixed, what's left for me, and any risks you accepted and why.")
+    raise ToolError(f"Unknown prompt {name}")
+
 
 TOOLS = [
     {
@@ -76,6 +103,70 @@ TOOLS = [
         "inputSchema": {"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
     },
     {
+        "name": "ladpock_fix_start",
+        "description": "Start fixing this project's security findings one at a time, worst first. LadPock re-scans, makes the list, and "
+                       "gives you the first finding with how to fix it. After each fix call ladpock_fix_check, which confirms the fix "
+                       "with a fresh scan and gives you the next one. Use this when the user asks to fix what LadPock found.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "path": {"type": "string", "description": "Absolute path of the project folder (the folder you are working in)"},
+                "which": {"type": "string", "enum": list(fixloop.SCOPES),
+                          "description": "Lowest severity to include: critical, high (default), medium, low, or all"},
+                "refs": {"type": "array", "items": {"type": "string"}, "description": "Only these findings (refs from ladpock_findings)"},
+                "notes": {"type": "string", "description": "Anything the user said that should guide every fix"},
+            },
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "ladpock_fix_check",
+        "description": "Call after fixing the finding LadPock gave you. LadPock re-scans and says whether it's fixed (and whether the change "
+                       "introduced anything new), tells you whether to commit, and gives you the next finding.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"path": {"type": "string", "description": "Absolute path of the project folder (the folder you are working in)"},
+                           "note": {"type": "string", "description": "One line on what you changed, shown to the user"}},
+            "required": ["path"],
+        },
+    },
+    {
+        "name": "ladpock_fix_next",
+        "description": "Show the finding you're working on in the current fix run (or the next one), for example after a break.",
+        "inputSchema": {"type": "object", "properties": {"path": {"type": "string", "description": "Absolute path of the project folder (the folder you are working in)"}}, "required": ["path"]},
+    },
+    {
+        "name": "ladpock_fix_skip",
+        "description": "Leave the current finding for the user (for example it needs a decision only they can make) and move to the next.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"path": {"type": "string", "description": "Absolute path of the project folder (the folder you are working in)"},
+                           "reason": {"type": "string", "description": "Why, in a sentence the user can act on"},
+                           "ref": {"type": "string", "description": "The finding's ref, if not the current one"}},
+            "required": ["path", "reason"],
+        },
+    },
+    {
+        "name": "ladpock_accept_risk",
+        "description": "Accept a finding as a known risk because it isn't a real problem here or is a deliberate choice. It is never hidden: "
+                       "it's listed under Known risks with your reason, the grade notes it, and the user can undo it. Not allowed for "
+                       "critical findings. Tell the user whenever you do this.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"path": {"type": "string", "description": "Absolute path of the project folder (the folder you are working in)"},
+                           "ref": {"type": "string", "description": "The finding's ref"},
+                           "reason": {"type": "string", "description": "Why this is acceptable, in a sentence"},
+                           "days": {"type": "integer", "minimum": 1, "maximum": fixloop.MAX_ACCEPT_DAYS,
+                                    "description": "How long until it's checked again (default 90)"}},
+            "required": ["path", "ref", "reason"],
+        },
+    },
+    {
+        "name": "ladpock_fix_stop",
+        "description": "Stop the current fix run, for example when the user says to stop. What's done stays done.",
+        "inputSchema": {"type": "object", "properties": {"path": {"type": "string", "description": "Absolute path of the project folder (the folder you are working in)"}}, "required": ["path"]},
+    },
+    {
         "name": "ladpock_fix_prompt",
         "description": "A step-by-step fix list for the last scan's findings (or the given refs), with secrets masked.",
         "inputSchema": {
@@ -92,6 +183,8 @@ class ToolError(Exception):
 
 
 def _project(db: DB, path: str):
+    if not str(path or "").strip() or not Path(path).expanduser().is_absolute():
+        raise ToolError("path must be the absolute path of the project folder")
     root = Path(path).expanduser().resolve()
     if not root.is_dir():
         raise ToolError(f"{root} is not a folder")
@@ -120,6 +213,23 @@ def _format_findings(findings: list[dict], limit: int = 40) -> str:
     return "\n".join(lines)
 
 
+def _known_risks(scan) -> str:
+    """Accepted risks are part of every answer, so an assistant can't quietly make a finding disappear."""
+    summary = json.loads(scan["summary"] or "{}") if scan else {}
+    accepted = summary.get("accepted") or []
+    if not accepted:
+        return ""
+    lines = [f"\nKnown risks ({len(accepted)}, accepted, not counted in the grade):"]
+    for a in accepted:
+        who = "an AI assistant" if a.get("by") == "agent" else "the user"
+        lines.append(f"- [{a.get('severity')}] {a.get('title')} at {a.get('file') or 'project'} (ref {a.get('ref')}), accepted by {who}: "
+                     f"{a.get('reason')}")
+    return "\n".join(lines)
+
+
+CLIENT: dict = {}  # who's connected (from initialize), recorded on fix runs so the dashboard can say which assistant did the work
+
+
 def call_tool(db: DB, name: str, args: dict) -> str:
     if name == "ladpock_scan":
         profile = args.get("profile") or "standard"
@@ -138,13 +248,15 @@ def call_tool(db: DB, name: str, args: dict) -> str:
             c = result.changes
             head += (f" Since the previous scan: {c['previous_grade']} -> {card.grade}, {c['fixed_count']} fixed, "
                      f"{len(c['new'])} new.")
-        return f"{head}\n{_format_findings(findings)}\n\nCall ladpock_explain_grade for the path to A+."
+        return (f"{head}\n{_format_findings(findings)}" + _known_risks(db.latest_scan(result.project_id))
+                + "\n\nCall ladpock_explain_grade for the path to A+, or ladpock_fix_start to fix them one by one.")
     if name == "ladpock_findings":
         root, findings, scan = _latest(db, args["path"])
         floor = Severity.parse(args["min_severity"]) if args.get("min_severity") else Severity.INFO
         findings = [f for f in findings if Severity.parse(f["severity"]) >= floor
                     and (not args.get("file") or f.get("file") == str(args["file"]).replace("\\", "/"))]
-        return f"{root.name}: last scanned {scan['finished_at']}, grade {scan['grade']}.\n{_format_findings(findings)}"
+        return (f"{root.name}: last scanned {scan['finished_at']}, grade {scan['grade']}.\n{_format_findings(findings)}"
+                + _known_risks(scan))
     if name == "ladpock_routes":
         root, _ = _project(db, args["path"])
         routes = analyze(FileIndex(root))
@@ -169,6 +281,19 @@ def call_tool(db: DB, name: str, args: dict) -> str:
         for i, step in enumerate(a["plan"], 1):
             lines.append(f"Step {i}: fix {step['count']} {step['severity']} finding(s) -> {step['grade']} ({step['score']}).")
         return "\n".join(lines)
+    if name == "ladpock_fix_start":
+        return fixloop.start(db, args["path"], str(args.get("which") or "high"), args.get("refs") or None, str(args.get("notes") or ""),
+                             agent=CLIENT.get("name", ""), offline=bool(args.get("offline")))
+    if name == "ladpock_fix_check":
+        return fixloop.check(db, args["path"], str(args.get("note") or ""), offline=bool(args.get("offline")))
+    if name == "ladpock_fix_next":
+        return fixloop.next_item(db, args["path"])
+    if name == "ladpock_fix_skip":
+        return fixloop.skip(db, args["path"], str(args.get("reason") or ""), args.get("ref") or None)
+    if name == "ladpock_accept_risk":
+        return fixloop.accept_risk(db, args["path"], str(args.get("ref") or ""), str(args.get("reason") or ""), args.get("days", 90))
+    if name == "ladpock_fix_stop":
+        return fixloop.stop(db, args["path"])
     if name == "ladpock_fix_prompt":
         root, findings, _ = _latest(db, args["path"])
         refs = set(args.get("refs") or [])
@@ -183,24 +308,41 @@ def handle(message: dict, db_factory: Callable[[], DB]) -> dict | None:
     if msg_id is None:
         return None
     if method == "initialize":
-        requested = (message.get("params") or {}).get("protocolVersion")
+        params = message.get("params") or {}
+        requested = params.get("protocolVersion")
+        info = params.get("clientInfo")
+        if isinstance(info, dict) and isinstance(info.get("name"), str):
+            CLIENT["name"] = info["name"][:80]
         return {"jsonrpc": "2.0", "id": msg_id, "result": {
             "protocolVersion": requested if requested in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0],
-            "capabilities": {"tools": {}},
+            "capabilities": {"tools": {}, "prompts": {}},
             "serverInfo": {"name": "ladpock", "version": __version__},
             "instructions": "LadPock checks the user's own projects for security problems. Scan after changes to "
-                            "auth, data access, payments, file handling or config, and fix high and critical findings.",
+                            "auth, data access, payments, file handling or config, and fix high and critical findings. "
+                            "When the user asks to fix what LadPock found, use ladpock_fix_start and follow its instructions: "
+                            "one finding at a time, each confirmed with ladpock_fix_check.",
         }}
     if method == "ping":
         return {"jsonrpc": "2.0", "id": msg_id, "result": {}}
     if method == "tools/list":
         return {"jsonrpc": "2.0", "id": msg_id, "result": {"tools": TOOLS}}
+    if method == "prompts/list":
+        return {"jsonrpc": "2.0", "id": msg_id, "result": {"prompts": PROMPTS}}
+    if method == "prompts/get":
+        params = message.get("params") or {}
+        try:
+            text = prompt_text(str(params.get("name")), params.get("arguments") or {})
+        except ToolError as exc:
+            return {"jsonrpc": "2.0", "id": msg_id, "error": {"code": -32602, "message": str(exc)}}
+        return {"jsonrpc": "2.0", "id": msg_id, "result": {
+            "description": next(p["description"] for p in PROMPTS if p["name"] == params.get("name")),
+            "messages": [{"role": "user", "content": {"type": "text", "text": text}}]}}
     if method == "tools/call":
         params = message.get("params") or {}
         db = db_factory()
         try:
             text, error = call_tool(db, str(params.get("name")), params.get("arguments") or {}), False
-        except (ToolError, FileNotFoundError, KeyError, ValueError) as exc:
+        except (ToolError, fixloop.FixError, FileNotFoundError, KeyError, ValueError) as exc:
             text, error = f"Error: {exc}", True
         finally:
             db.close()
