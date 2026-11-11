@@ -56,7 +56,8 @@ def main(wheel_arg: str) -> None:
         )) + "\n"
         replies = [json.loads(line) for line in run([exe, "mcp"], env, root, stdin=messages).stdout.splitlines()]
         assert replies[0]["result"]["serverInfo"]["version"] == version
-        assert len(replies[1]["result"]["tools"]) == 5
+        tools = {t["name"] for t in replies[1]["result"]["tools"]}
+        assert {"ladpock_scan", "ladpock_findings", "ladpock_fix_start", "ladpock_fix_check", "ladpock_accept_risk"} <= tools, tools
 
         run([python, "-c",
              "import json, pathlib, ladpock; from ladpock.ui.server import STATIC; "
